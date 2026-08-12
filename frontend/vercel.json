@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/takamol-api/(.*)",
-      "destination": "https://playwright-mcp-vnc-production.up.railway.app/$1"
+      "destination": "https://takamol-api.up.railway.app/$1"
     },
     {
       "source": "/((?!assets|favicon\\.ico|favicon\\.png|robots\\.txt|placeholder\\.svg).*)",

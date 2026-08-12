@@ -120,3 +120,4 @@ supabase/.temp/
 
 # VS Code AI tooling (kilo) — local-only artifacts
 .kilo/
+preview.log

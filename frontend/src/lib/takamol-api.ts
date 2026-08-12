@@ -2,7 +2,7 @@
  * Takamol live API client.
  *
  * Points at the live Playwright-MCP noVNC backend:
- *   https://playwright-mcp-vnc-production.up.railway.app
+ *   https://takamol-api.up.railway.app
  *
  * Every endpoint returns the envelope:
  *   { success: boolean, data: T, error?: string }
