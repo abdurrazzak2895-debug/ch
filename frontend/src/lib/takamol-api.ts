@@ -60,7 +60,9 @@ interface FetchOpts {
 export async function takamolFetch<T = any>(path: string, opts: FetchOpts = {}): Promise<T> {
   const method = (opts.method || (opts.body !== undefined ? "POST" : "GET")).toUpperCase();
 
-  let url = `${API_BASE}${path}`;
+  let url = isVercelBrowser && path.startsWith("/api/takamol/")
+    ? `${API_BASE}?path=${encodeURIComponent(path.slice("/api/takamol/".length))}`
+    : `${API_BASE}${path}`;
   if (opts.query) {
     const qs = new URLSearchParams();
     Object.entries(opts.query).forEach(([key, value]) => {
