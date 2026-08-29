@@ -73,7 +73,11 @@ function getSession() {
 }
 
 function saveSession(data: { accessToken?: string; refreshToken?: string; sessionId?: string }) {
-  if (data.accessToken) localStorage.setItem("accessToken", data.accessToken);
+  if (data.accessToken) {
+    // accessToken is the candidate SVP session. The access-portal token is
+    // owned by access-api.ts and remains in the separate access_token key.
+    localStorage.setItem("accessToken", data.accessToken);
+  }
   if (data.refreshToken) localStorage.setItem("refreshToken", data.refreshToken);
   if (data.sessionId) localStorage.setItem("sessionId", data.sessionId);
 }
@@ -158,16 +162,19 @@ async function callFunction<T = any>(
   let access = token || session.accessToken;
   const requestId = crypto.randomUUID();
 
-  const makeOpts = (accessToken: string | null): RequestInit => ({
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...(localStorage.getItem("access_token") ? { "X-Access-Token": localStorage.getItem("access_token")! } : {}),
-      ...(method !== "GET" ? { "X-Request-Id": requestId } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const makeOpts = (candidateToken: string | null): RequestInit => {
+    const accessPortalToken = localStorage.getItem("access_token");
+    return {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(candidateToken ? { Authorization: `Bearer ${candidateToken}` } : {}),
+        ...(accessPortalToken ? { "X-Access-Token": accessPortalToken } : {}),
+        ...(method !== "GET" ? { "X-Request-Id": requestId } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    };
+  };
 
   const shouldRefresh = (status: number, payload: any) => {
     const message = String(payload?.message || payload?.error || "").toLowerCase();
@@ -188,7 +195,7 @@ async function callFunction<T = any>(
 
       if (refreshRes.res.ok && refreshRes.data?.accessToken) {
         access = refreshRes.data.accessToken;
-        localStorage.setItem("accessToken", access);
+        saveSession({ accessToken: access });
         ({ res, data } = await doFetch(`${BASE}${prefix}${path}`, makeOpts(access)));
       } else if (refreshRes.res.status === 401) {
         clearSession();

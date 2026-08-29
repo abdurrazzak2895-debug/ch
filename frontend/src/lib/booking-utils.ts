@@ -23,6 +23,79 @@ export function pickArray(payload: any): any[] {
   return [];
 }
 
+/** True when SVP rejected a 422 because the selected session is no longer usable. */
+export function isNoExamSession422(error: any): boolean {
+  const details = error?.data?.details;
+  const fragments = [
+    error?.message,
+    error?.data?.message,
+    error?.data?.error,
+    typeof details === "string" ? details : JSON.stringify(details || ""),
+  ].filter(Boolean).join(" ");
+  return Number(error?.status) === 422 && /no\s+exam\s+session|test\s+center.*no.*session|exam\s+session.*(?:not|unavailable|found)/i.test(fragments);
+}
+
+// Returns true when the proxy returned the T2HUB_SESSION_MISSING code. The
+// booking page is the only place a user sees t2hub session errors today, so
+// it owns the user-facing message and shows a single visible banner instead
+// of silently leaving every picker empty.
+export function isT2HubSessionMissing(error: any): boolean {
+  if (!error) return false;
+  if (error?.data?.code === "T2HUB_SESSION_MISSING") return true;
+  if (error?.data?.error?.code === "T2HUB_SESSION_MISSING") return true;
+  if (Number(error?.status) === 503 && /t2hub session has not been bootstrapped/i.test(String(error?.message || ""))) {
+    return true;
+  }
+  return false;
+}
+
+export const T2HUB_SESSION_MISSING_MESSAGE =
+  "Booking data is temporarily unavailable: the t2hub session has not been bootstrapped on the server. Please contact your administrator.";
+
+export const VERIFIED_DHAKA_CENTER_ROSTER = [
+  { siteId: "403", name: "Arkan Al-Taameer for professional classification - Dhaka", city: "Dhaka" },
+  { siteId: "223", name: "Manikganj Technical Training Center", city: "Dhaka" },
+  { siteId: "220", name: "Kishoreganj Technical Training Centre", city: "Dhaka" },
+  { siteId: "218", name: "Narsingdi Technical Training Center", city: "Dhaka" },
+  { siteId: "102", name: "Tangail Technical Training Center", city: "Dhaka" },
+  { siteId: "45", name: "Bangladesh German TTC", city: "Dhaka" },
+  { siteId: "17", name: "Bangladesh Korea TTC Dhaka", city: "Dhaka" },
+] as const;
+
+/**
+ * Restrict the Dhaka selector to the seven SVP centre IDs verified by the
+ * user-provided live response. Missing rows are backfilled with the verified
+ * names so an older proxy deployment cannot hide a real centre; date-scoped
+ * session checks still decide whether each row is selectable for a date.
+ */
+export function mergeVerifiedCityCenterRoster<T extends Record<string, any>>(
+  centers: T[],
+  city: string,
+  countryId: string | number = "78",
+): T[] {
+  const isDhakaBangladesh = String(city || "").trim().toLowerCase() === "dhaka" && String(countryId) === "78";
+  if (!isDhakaBangladesh) return centers;
+
+  const bySiteId = new Map<string, T>();
+  centers.forEach((center) => {
+    const siteId = String(center?.test_center_id ?? center?.id ?? center?.site_id ?? "").trim();
+    if (siteId) bySiteId.set(siteId, center);
+  });
+
+  return VERIFIED_DHAKA_CENTER_ROSTER.map((verified) => {
+    const live = bySiteId.get(verified.siteId);
+    if (live) return live;
+    return {
+      test_center_id: verified.siteId,
+      id: Number(verified.siteId),
+      test_center_name: verified.name,
+      name: verified.name,
+      city: verified.city,
+      country_id: 78,
+    } as T;
+  });
+}
+
 export function normalizeDateValue(value: string): string {
   if (!value) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -79,26 +152,160 @@ export function getSessionId(item: any): string {
 }
 
 export function getSessionSiteId(item: any): string {
+  const nested = item?.exam_session || item?.data?.exam_session || {};
+  const center = item?.test_center || nested?.test_center || {};
   return String(
     item?.site_id ||
-    item?.test_center?.site_id ||
-    item?.test_center?.id ||
-    item?.test_center?.test_center_id ||
+    nested?.site_id ||
+    center?.site_id ||
+    center?.id ||
+    center?.test_center_id ||
     item?.test_center_id ||
+    nested?.test_center_id ||
     item?.site?.id ||
+    nested?.site?.id ||
     ""
   );
 }
 
+/**
+ * Verify a selected session's centre without weakening the wrong-centre guard.
+ *
+ * Some live SVP detail responses contain only a city-level test_center object,
+ * while the centre-scoped list response already carries the authoritative
+ * site_id/test_center_id. In that specific case, the list row may be used as a
+ * fallback only when it is the same session ID and already matches the selected
+ * centre. Any explicit conflicting detail centre ID remains a hard failure.
+ */
+function walkResponseNodes(value: any, depth = 0, seen = new Set<any>()): any[] {
+  if (value == null || depth > 5 || typeof value !== "object" || seen.has(value)) return [];
+  seen.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return [value, ...children.flatMap((child) => walkResponseNodes(child, depth + 1, seen))];
+}
+
+/**
+ * Extract explicit site/test-centre IDs from a booking or reservation response.
+ * A response that reports any ID other than the selected centre must be treated
+ * as unsafe; a response with no explicit ID is allowed only after the selected
+ * session has already passed the preflight centre guard.
+ */
+export function getResponseCenterIds(payload: any): string[] {
+  return Array.from(new Set(
+    walkResponseNodes(payload)
+      .map((node) => String(getSessionSiteId(node) || "").trim())
+      .filter(Boolean),
+  ));
+}
+
+export function getResponseCenterName(payload: any): string {
+  for (const node of walkResponseNodes(payload)) {
+    const name = getExplicitSessionCenterName(node);
+    if (name) return name;
+  }
+  return "";
+}
+
+export function resolveVerifiedResponseCenterId(payload: any, expectedCenterId: string | number): string {
+  const expected = String(expectedCenterId || "").trim();
+  if (!expected) return "";
+  const ids = getResponseCenterIds(payload);
+  if (ids.some((id) => id !== expected)) return "";
+  return ids.length ? expected : "";
+}
+
+export function resolveVerifiedSessionCenterId(args: {
+  detail: any;
+  selectedSession: any;
+  expectedSessionId: string | number;
+  expectedCenterId: string | number;
+}): string {
+  const expectedSessionId = String(args.expectedSessionId || "").trim();
+  const expectedCenterId = String(args.expectedCenterId || "").trim();
+  if (!expectedSessionId || !expectedCenterId) return "";
+
+  const detailCandidates = [
+    args.detail,
+    args.detail?.exam_session,
+    args.detail?.data,
+    args.detail?.data?.exam_session,
+  ].filter(Boolean);
+  const detailCenterIds = Array.from(new Set(
+    detailCandidates
+      .map((candidate) => String(getSessionSiteId(candidate) || "").trim())
+      .filter(Boolean)
+  ));
+
+  if (detailCenterIds.length === 1) {
+    return detailCenterIds[0] === expectedCenterId ? expectedCenterId : "";
+  }
+  if (detailCenterIds.length > 1) return "";
+
+  const selectedSessionId = String(getSessionId(args.selectedSession) || "").trim();
+  const selectedCenterId = String(getSessionSiteId(args.selectedSession) || "").trim();
+  if (
+    selectedSessionId === expectedSessionId &&
+    selectedCenterId === expectedCenterId
+  ) {
+    return expectedCenterId;
+  }
+
+  return "";
+}
+
 export function getSessionSiteCity(item: any): string {
-  const sc = item?.site_city;
-  const tc = item?.test_center;
+  const nested = item?.exam_session || item?.data?.exam_session || {};
+  const sc = item?.site_city ?? nested?.site_city;
+  const tc = item?.test_center || nested?.test_center;
   // Support both legacy SVP shape (test_center.city) and new SVP shape (test_center.test_center_city)
   return String(
     (typeof sc === "object" ? sc?.name || sc?.city || sc?.english_name : sc) ||
     tc?.test_center_city || tc?.city ||
-    item?.city || item?.site_city_name || item?.test_center_city || ""
+    item?.city || nested?.city || item?.site_city_name || item?.test_center_city || ""
   );
+}
+
+export function getSessionPayloadId(value: string | number): number | string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && String(numeric) === raw) {
+    return numeric > 0 ? numeric : null;
+  }
+  return raw;
+}
+
+export function filterSessionsForCenter(sessions: any[], centerId: string | number): any[] {
+  const expected = String(centerId || "").trim();
+  if (!expected) return [];
+  return sessions.filter((session: any) => {
+    const actual = String(getSessionSiteId(session) || "").trim();
+    return actual !== "" && actual === expected;
+  });
+}
+
+/**
+ * Build the new-booking body used by the official SVP confirm step.
+ *
+ * The encrypted exam_session_id is the authoritative center binding. The
+ * selected center and temporary hold remain client-side gates, but sending
+ * them as overrides lets stale center state redirect a booking within a city.
+ */
+export function buildExamReservationPayload(args: {
+  examSessionId: string | number | null;
+  occupationId: string | number;
+  methodology: string;
+  languageCode: string;
+}) {
+  return {
+    exam_session_id: args.examSessionId,
+    occupation_id: Number(args.occupationId),
+    methodology: args.methodology || "in_person",
+    language_code: args.languageCode,
+    site_id: null,
+    site_city: null,
+    hold_id: null,
+  };
 }
 
 export function getSessionCenterName(item: any): string {
@@ -301,6 +508,15 @@ export function buildCenterOptions(items: any[]): CenterOption[] {
     map.set(sid, { siteId: sid, name: getSessionCenterName(item), city: getSessionSiteCity(item) });
   });
   return Array.from(map.values());
+}
+
+/**
+ * Keep only centres that have a positive live session count for the selected
+ * date. A missing count means the centre endpoint was loaded without a date
+ * scope, so it is retained until date-scoped availability is known.
+ */
+export function filterCentersWithAvailableSessions<T extends { sessionCount?: number | null }>(items: T[]): T[] {
+  return items.filter((item) => item.sessionCount == null || Number(item.sessionCount) > 0);
 }
 
 export interface FallbackCenter {

@@ -1,19 +1,35 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
-import { getReservationBillingOperation } from "./billing-utils.ts";
+import { canFinalizeWalletDebit, getReservationBillingOperation } from "./billing-utils.ts";
+import { filterLiveSessionsForCenter, getSessionCenterId } from "./session-center-utils.ts";
+import {
+  buildReservationCollectionQuery,
+  filterReservationRows,
+  getReservationLookupId,
+  reshapeReservationPayload,
+} from "./reservation-utils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type",
+    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type, x-t2hub-cookie, x-t2hub-key",
+  "Access-Control-Expose-Headers": "x-t2hub-cookie",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
+// Code returned in the outer error response when a t2hub-backed route is
+// called without x-t2hub-cookie + x-t2hub-key. The booking page detects
+// this and triggers a one-time t2hub login bridge to capture the
+// caller's own t2hub session material.
+export const T2HUB_SESSION_MISSING_CODE = "T2HUB_SESSION_MISSING";
+
 function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  const headers: Record<string, string> = {
+    ...corsHeaders,
+    "Content-Type": "application/json",
+  };
+  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  return new Response(JSON.stringify(data), { status, headers });
 }
 
 function getSupabase() {
@@ -23,7 +39,7 @@ function getSupabase() {
   );
 }
 
-// ── SVP API helper ──────────────────────────────────────────────────
+// ΓöÇΓöÇ SVP API helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const SVP_BASE = Deno.env.get("SVP_BASE_URL") || "https://svp-international-api.pacc.sa";
 const SVP_LOCALE = "en";
 const SVP_ORIGIN = "https://svp-international.pacc.sa";
@@ -41,6 +57,34 @@ async function getAccessJwtKey() {
   );
 }
 
+type SvpErrorCode = "CANDIDATE_ACCOUNT_REQUIRED" | "CANDIDATE_LABOR_ID_EXISTS" | "SVP_VALIDATION_ERROR" | "SVP_UPSTREAM_ERROR";
+
+function firstNestedError(data: any): string {
+  const laborId = data?.errors?.temporaryseat?.labor_id;
+  if (Array.isArray(laborId) && laborId[0]) return String(laborId[0]);
+  for (const value of Object.values(data?.errors || {})) {
+    if (Array.isArray(value) && value[0]) return String(value[0]);
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        if (Array.isArray(item) && item[0]) return String(item[0]);
+      }
+    }
+  }
+  return "";
+}
+
+function normalizeSvpError(statusCode: number, data: any) {
+  const rawMessage = String(data?.message || data?.error || firstNestedError(data) || "");
+  const normalized = rawMessage.toLowerCase();
+  if (normalized.includes("active candidate account is required") || (normalized.includes("candidate account") && normalized.includes("required"))) {
+    return { statusCode, code: "CANDIDATE_ACCOUNT_REQUIRED" as SvpErrorCode, message: "Active candidate account is required", details: { upstreamStatus: statusCode } };
+  }
+  if (normalized.includes("labor_id") && normalized.includes("already been taken")) {
+    return { statusCode: 409, code: "CANDIDATE_LABOR_ID_EXISTS" as SvpErrorCode, message: "This candidate labor ID is already registered. Use the existing candidate account.", details: { upstreamStatus: statusCode } };
+  }
+  return { statusCode, code: (statusCode === 422 ? "SVP_VALIDATION_ERROR" : "SVP_UPSTREAM_ERROR") as SvpErrorCode, message: rawMessage || `SVP request failed: ${statusCode}`, details: { upstreamStatus: statusCode } };
+}
+
 async function requireAccessPermission(req: Request, permissionKey: string) {
   const token = req.headers.get("x-access-token")?.trim();
   if (!token) throw { statusCode: 401, message: "Access Portal login is required" };
@@ -48,7 +92,7 @@ async function requireAccessPermission(req: Request, permissionKey: string) {
   try {
     payload = await verify(token, await getAccessJwtKey()) as { sub?: string };
   } catch {
-    throw { statusCode: 401, message: "Access Portal session expired" };
+    throw { statusCode: 401, code: "ACCESS_ACCOUNT_REQUIRED", message: "Access Portal session expired" };
   }
   const supabase = getSupabase();
   const { data: account } = await supabase
@@ -57,7 +101,7 @@ async function requireAccessPermission(req: Request, permissionKey: string) {
     .eq("id", payload.sub || "")
     .single();
   if (!account || account.status !== "ACTIVE" || account.role !== "USER") {
-    throw { statusCode: 403, message: "Active candidate account is required" };
+    throw { statusCode: 403, code: "ACCESS_ACCOUNT_REQUIRED", message: "An active access-portal account with booking permission is required" };
   }
   if (account.permission_mode === "MANAGED") {
     const { data: permission } = await supabase.from("account_permissions")
@@ -117,8 +161,68 @@ function findReservationId(value: any): string {
 }
 
 let t2hubSession:
-  | { keyRaw: string; cookie: string; appPath: string; expiresAt: number }
+  | {
+      keyRaw: string;
+      cookie: string;
+      csrfToken: string;
+      appPath: string;
+      expiresAt: number;
+    }
   | null = null;
+
+// After every t2hub call we stash the most recent cookies here so the
+// response builder can echo them back to the caller in
+// `x-t2hub-cookie`. The caller is responsible for keeping its own copy in
+// sync ΓÇö these cookies rotate on every t2hub response.
+let lastT2HubCookie = "";
+
+// The t2hub landing page, every JSON API call, and the encrypted envelope
+// (x-encrypted: 1) all rotate the session and CSRF cookies. We must keep the
+// "real" XSRF-TOKEN from the meta tag (URL-encoded) and the Laravel session
+// payload from the most recent response. Once a t2_hub_session cookie goes
+// stale, the API returns 401/419 even with a fresh key, so this state is the
+// most important thing the proxy maintains.
+//
+// t2hub is a stateful Laravel app ΓÇö a fresh server has no session. Callers
+// MUST pass their logged-in t2hub cookies (and the session key from
+// `window.__sk`) via the `x-t2hub-cookie` and `x-t2hub-key` request headers
+// so we can hit the read-only API on their behalf. After each call we return
+// any rotated cookies in the `x-t2hub-cookie` response header so the caller
+// can keep its own copy fresh.
+const T2HUB_KEY_HEADER = "x-t2hub-key";
+const T2HUB_COOKIE_HEADER = "x-t2hub-cookie";
+const T2HUB_RESPONSE_COOKIE_HEADER = "x-t2hub-cookie";
+
+function t2HubHeadersFromRequest(req: Request): { keyRaw: string; cookie: string } | null {
+  const keyRaw = req.headers.get(T2HUB_KEY_HEADER)?.trim() || "";
+  const cookie = req.headers.get(T2HUB_COOKIE_HEADER)?.trim() || "";
+  if (!keyRaw || !cookie) return null;
+  return { keyRaw, cookie };
+}
+
+function parseCookieHeader(header: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!header) return out;
+  for (const part of header.split(/,(?=\s*[^;,]+=)/)) {
+    const [raw] = part.split(";");
+    const eq = raw.indexOf("=");
+    if (eq < 0) continue;
+    const name = raw.slice(0, eq).trim();
+    const value = raw.slice(eq + 1).trim();
+    if (name && value) out.set(name, value);
+  }
+  return out;
+}
+
+function mergeCookieHeader(previous: string, additions: string): string {
+  const merged = parseCookieHeader(previous);
+  for (const [name, value] of parseCookieHeader(additions)) {
+    merged.set(name, value);
+  }
+  return Array.from(merged.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
 
 async function svpFetch(
   path: string,
@@ -149,7 +253,7 @@ async function svpFetch(
   }
 
   if (!res.ok) {
-    throw { statusCode: res.status, message: `SVP request failed: ${res.status}`, details: data };
+    throw normalizeSvpError(res.status, data);
   }
   return data;
 }
@@ -171,15 +275,11 @@ async function svpFetchRaw(
   });
 }
 
-function extractT2HubCookie(headers: Headers): string {
+function extractT2HubCookie(headers: Headers, previous = ""): string {
   const anyHeaders = headers as Headers & { getSetCookie?: () => string[] };
   const setCookies = anyHeaders.getSetCookie?.() || [];
-  const raw = setCookies.length ? setCookies : [headers.get("set-cookie") || ""];
-  return raw
-    .flatMap((item) => item.split(/,(?=\s*[^;,]+=)/))
-    .map((item) => item.trim().split(";")[0])
-    .filter(Boolean)
-    .join("; ");
+  const raw = setCookies.length ? setCookies.join(",") : headers.get("set-cookie") || "";
+  return mergeCookieHeader(previous, raw);
 }
 
 function extractT2HubKey(html: string): string {
@@ -187,7 +287,9 @@ function extractT2HubKey(html: string): string {
 }
 
 function extractT2HubCsrf(html: string): string {
-  return html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/)?.[1] || "";
+  return (
+    html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/)?.[1] || ""
+  );
 }
 
 async function fetchT2HubSessionPage(appPath: string) {
@@ -222,12 +324,19 @@ async function getT2HubSession() {
   }
 
   throw {
-    statusCode: 502,
-    message: "Failed to initialize t2hub session",
+    statusCode: 503,
+    code: T2HUB_SESSION_MISSING_CODE,
+    message: "t2hub session has not been provided. The booking page requires a one-time t2hub login to capture the caller's session cookies and AES key before it can load t2hub-backed data.",
     details: { status: lastStatus || undefined },
   };
 }
 
+// t2hub uses Laravel's Crypt::encrypt with AES-256-GCM. The encrypted envelope
+// has `{p, iv}` where both are base64-encoded. The body is the base64 string
+// itself (Content-Encoding: gzip was already inflated by Deno's fetch), so
+// decoding must happen before JSON parsing. The landing page also exposes the
+// session key in `window.__sk` (also base64), which we use to import the
+// AES-GCM key.
 async function decryptT2HubEnvelope(envelope: any, keyRaw: string) {
   if (!envelope?.p || !envelope?.iv) return envelope;
   const keyBytes = Uint8Array.from(atob(keyRaw), (c) => c.charCodeAt(0));
@@ -236,6 +345,38 @@ async function decryptT2HubEnvelope(envelope: any, keyRaw: string) {
   const cipher = Uint8Array.from(atob(envelope.p), (c) => c.charCodeAt(0));
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
   return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// Some t2hub endpoints (e.g. /token-status) return a plaintext JSON body when
+// the request lacks valid cookies, then flip to encrypted once the session is
+// established. We must not try to decrypt plaintext, so the trigger is the
+// `x-encrypted: 1` response header.
+async function decodeT2HubResponse(res: Response, keyRaw: string) {
+  const text = await res.text();
+  const isEncrypted = (res.headers.get("x-encrypted") || "").trim() === "1";
+  if (!isEncrypted) {
+    try {
+      return text ? JSON.parse(text) : null;
+    } catch {
+      return { raw: text };
+    }
+  }
+  // The encrypted body is a base64 string, not JSON. Parse it as JSON first
+  // (Laravel returns it as a quoted string), then unwrap the envelope.
+  let envelope: any = text;
+  try {
+    envelope = JSON.parse(text);
+  } catch {
+    // Body may already be a raw base64 string, not JSON-encoded.
+  }
+  if (typeof envelope === "string") {
+    try {
+      envelope = JSON.parse(envelope);
+    } catch {
+      /* not JSON ΓÇö keep as raw */
+    }
+  }
+  return await decryptT2HubEnvelope(envelope, keyRaw);
 }
 
 async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSession>) {
@@ -251,17 +392,12 @@ async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSes
         ...(session.cookie ? { Cookie: session.cookie } : {}),
       },
     });
-    const text = await res.text();
-    let data: any;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
-    }
+    session.cookie = extractT2HubCookie(res.headers, session.cookie);
     if (!res.ok) {
-      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details: data };
+      const details = await decodeT2HubResponse(res, session.keyRaw).catch(() => null);
+      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
     }
-    return data;
+    return await decodeT2HubResponse(res, session.keyRaw);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -279,56 +415,98 @@ async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNulla
         "Content-Type": "application/json",
         Referer: `${T2HUB_BASE}${session.appPath}`,
         "User-Agent": SVP_UA,
-        // Confirmed from live traffic: this endpoint is Laravel-CSRF-protected —
+        // Confirmed from live traffic: this endpoint is Laravel-CSRF-protected ΓÇö
         // POSTing without a matching X-CSRF-TOKEN (bound to the session cookie)
-        // fails with 419. GET endpoints don't need this.
+        // fails with 419. The XSRF-TOKEN cookie value is URL-encoded while the
+        // header value is the raw meta-tag value, and Laravel compares them
+        // after a decode. Send the latest value from the most recent response.
         ...(session.csrfToken ? { "X-CSRF-TOKEN": session.csrfToken } : {}),
         ...(session.cookie ? { Cookie: session.cookie } : {}),
       },
       body: JSON.stringify(body),
     });
-    const text = await res.text();
-    let data: any;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
-    }
+    session.cookie = extractT2HubCookie(res.headers, session.cookie);
     if (!res.ok) {
-      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details: data };
+      const details = await decodeT2HubResponse(res, session.keyRaw).catch(() => null);
+      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
     }
-    return data;
+    return await decodeT2HubResponse(res, session.keyRaw);
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function t2hubFetch(path: string) {
+async function t2hubFetch(path: string, req: Request): Promise<any> {
+  const provided = t2HubHeadersFromRequest(req);
+  if (provided) {
+    const session: NonNullable<typeof t2hubSession> = {
+      keyRaw: provided.keyRaw,
+      cookie: provided.cookie,
+      csrfToken: "",
+      appPath: T2HUB_APP_PATH,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    };
+    const data = await fetchT2HubJson(path, session);
+    lastT2HubCookie = session.cookie;
+    return data;
+  }
+  // Fallback: server-side cached session. Only works if a previous caller
+  // bootstrapped the proxy by providing their cookies once.
   const session = await getT2HubSession();
-  const data = await fetchT2HubJson(path, session);
-
   try {
-    return await decryptT2HubEnvelope(data, session.keyRaw);
-  } catch {
-    t2hubSession = null;
-    const fresh = await getT2HubSession();
-    const freshData = await fetchT2HubJson(path, fresh);
-    return await decryptT2HubEnvelope(freshData, fresh.keyRaw);
+    const data = await fetchT2HubJson(path, session);
+    lastT2HubCookie = session.cookie;
+    return data;
+  } catch (err: any) {
+    if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
+      t2hubSession = null;
+      const fresh = await getT2HubSession();
+      const data = await fetchT2HubJson(path, fresh);
+      lastT2HubCookie = fresh.cookie;
+      return data;
+    }
+    throw err;
   }
 }
 
-async function t2hubPost(path: string, body: unknown) {
-  const session = await getT2HubSession();
-  const data = await fetchT2HubJsonPost(path, body, session);
-
-  try {
-    return await decryptT2HubEnvelope(data, session.keyRaw);
-  } catch {
-    t2hubSession = null;
-    const fresh = await getT2HubSession();
-    const freshData = await fetchT2HubJsonPost(path, body, fresh);
-    return await decryptT2HubEnvelope(freshData, fresh.keyRaw);
+async function t2hubPost(path: string, body: unknown, req: Request): Promise<any> {
+  const provided = t2HubHeadersFromRequest(req);
+  if (provided) {
+    const session: NonNullable<typeof t2hubSession> = {
+      keyRaw: provided.keyRaw,
+      cookie: provided.cookie,
+      csrfToken: "",
+      appPath: T2HUB_APP_PATH,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    };
+    const data = await fetchT2HubJsonPost(path, body, session);
+    lastT2HubCookie = session.cookie;
+    return data;
   }
+  const session = await getT2HubSession();
+  try {
+    const data = await fetchT2HubJsonPost(path, body, session);
+    lastT2HubCookie = session.cookie;
+    return data;
+  } catch (err: any) {
+    if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
+      t2hubSession = null;
+      const fresh = await getT2HubSession();
+      const data = await fetchT2HubJsonPost(path, body, fresh);
+      lastT2HubCookie = fresh.cookie;
+      return data;
+    }
+    throw err;
+  }
+}
+
+function jsonWithT2HubCookie(data: unknown, status = 200) {
+  const headers: Record<string, string> = {
+    ...corsHeaders,
+    "Content-Type": "application/json",
+  };
+  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  return new Response(JSON.stringify(data), { status, headers });
 }
 
 function t2hubQuery(path: string, params: URLSearchParams) {
@@ -358,7 +536,7 @@ function normalizeT2HubSession(item: any, centerByName: Map<string, any>) {
   };
 }
 
-// ── Crypto ──────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Crypto ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 async function getEncKey(): Promise<Uint8Array> {
   const raw = Deno.env.get("SESSION_ENC_KEY_BASE64") || "";
   if (raw) {
@@ -383,7 +561,7 @@ async function decryptString(b64: string): Promise<string> {
   return new TextDecoder().decode(decrypted);
 }
 
-// ── JWT verify ──────────────────────────────────────────────────────
+// ΓöÇΓöÇ JWT verify ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 async function verifyJwt(token: string): Promise<Record<string, unknown>> {
   const secret = Deno.env.get("JWT_ACCESS_SECRET")!;
   const parts = token.split(".");
@@ -411,20 +589,27 @@ async function verifyJwt(token: string): Promise<Record<string, unknown>> {
   return claims;
 }
 
-// ── Auth middleware ─────────────────────────────────────────────────
+// ΓöÇΓöÇ Auth middleware ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 async function requireAuth(req: Request): Promise<{ user: Record<string, unknown>; svpToken: string }> {
   const hdr = req.headers.get("authorization") || "";
   const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
-  if (!token) throw { statusCode: 401, message: "Missing access token" };
+  if (!token) throw { statusCode: 401, code: "CANDIDATE_ACCOUNT_REQUIRED", message: "An active candidate SVP session is required" };
 
-  const user = await verifyJwt(token);
+  let user: Record<string, unknown>;
+  try {
+    user = await verifyJwt(token);
+  } catch {
+    throw { statusCode: 401, code: "CANDIDATE_ACCOUNT_REQUIRED", message: "Candidate SVP session expired" };
+  }
   const sessionId = user.sid as string;
-  if (!sessionId) throw { statusCode: 401, message: "Missing session" };
+  if (!sessionId) throw { statusCode: 401, code: "CANDIDATE_ACCOUNT_REQUIRED", message: "Candidate SVP session is invalid" };
 
   const supabase = getSupabase();
   const { data: session } = await supabase.from("svp_sessions").select("*").eq("id", sessionId).single();
-  if (!session || session.revoked_at) throw { statusCode: 401, message: "Session revoked" };
-  if (!session.svp_access_enc) throw { statusCode: 401, message: "Missing SVP token" };
+  if (!session || session.revoked_at || (session.refresh_expires_at && new Date(session.refresh_expires_at).getTime() <= Date.now())) {
+    throw { statusCode: 401, code: "CANDIDATE_ACCOUNT_REQUIRED", message: "Candidate SVP session is inactive or expired" };
+  }
+  if (!session.svp_access_enc) throw { statusCode: 401, code: "CANDIDATE_ACCOUNT_REQUIRED", message: "Candidate SVP token is unavailable" };
 
   const svpToken = await decryptString(session.svp_access_enc);
   return { user, svpToken };
@@ -442,7 +627,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-// ── Route definitions ───────────────────────────────────────────────
+// ΓöÇΓöÇ Route definitions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 interface RouteEntry {
   method: string;
   pattern: RegExp;
@@ -482,7 +667,126 @@ function buildPath(basePath: string, queryString: string): string {
   return suffix ? `${basePath}?${suffix}` : basePath;
 }
 
-// ── Main handler ────────────────────────────────────────────────────
+const SVP_COUNTRY_ID = "78";
+
+function normalizeCityName(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function extractSessionCenterIds(value: any): string[] {
+  const candidates = [value, value?.exam_session, value?.data, value?.data?.exam_session].filter(Boolean);
+  return Array.from(new Set(candidates.map((session: any) => String(
+    session?.test_center_id ?? session?.test_center?.test_center_id ?? session?.test_center?.id ??
+    session?.site_id ?? session?.site?.id ?? ""
+  ).trim()).filter(Boolean)));
+}
+
+async function assertSvpSessionMatchesCenter(token: string, sessionId: string | number, expectedCenterId: string | number) {
+  const expected = String(expectedCenterId || "").trim();
+  if (!expected) throw { statusCode: 400, code: "CENTER_BINDING_REQUIRED", message: "Selected test centre is required" };
+  const detail = await svpFetch(
+    `/api/v1/individual_labor_space/exam_sessions/${encodeURIComponent(String(sessionId))}`,
+    { method: "GET", token },
+  );
+  const actualIds = extractSessionCenterIds(detail);
+  if (!actualIds.length) {
+    throw { statusCode: 502, code: "CENTER_BINDING_UNVERIFIED", message: "SVP did not return a centre for the selected session" };
+  }
+  if (actualIds.some((id) => id !== expected)) {
+    throw {
+      statusCode: 409,
+      code: "CENTER_MISMATCH",
+      message: `Selected session belongs to site ${actualIds[0]}, not selected site ${expected}`,
+      details: { expected_center_id: expected, actual_center_ids: actualIds },
+    };
+  }
+}
+
+function normalizeTestCenter(center: any) {
+  const id = center?.test_center_id ?? center?.id ?? center?.site_id ?? center?.site?.id ?? "";
+  const name = center?.test_center_name || center?.name || center?.site?.name || "";
+  const city = normalizeCityName(
+    center?.city || center?.test_center_city || center?.address?.locality || center?.address?.city
+  );
+  return {
+    ...center,
+    id: id === "" ? "" : String(id),
+    test_center_id: id === "" ? "" : String(id),
+    name: String(name || "").trim(),
+    test_center_name: String(name || "").trim(),
+    city,
+    test_center_city: city,
+  };
+}
+
+function extractTestCenters(payload: any): any[] {
+  const values = payload?.test_centers || payload?.centers || payload?.data?.test_centers || payload?.data?.centers || payload?.data;
+  return Array.isArray(values) ? values : [];
+}
+
+function extractCities(payload: any): string[] {
+  const values = payload?.cities || payload?.data?.cities || payload?.data || [];
+  if (!Array.isArray(values)) return [];
+  return Array.from(new Set(values.map((item: any) => normalizeCityName(
+    typeof item === "string" ? item : item?.city || item?.name || item?.english_name
+  )).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function extractSessions(payload: any): any[] {
+  const values = payload?.exam_sessions || payload?.sessions || payload?.data?.exam_sessions || payload?.data?.sessions || payload?.data;
+  return Array.isArray(values) ? values : [];
+}
+
+function enrichSessionsForCenter(sessions: any[], center: any, testCenterId: string, city: string) {
+  const normalizedCenter = normalizeTestCenter(center || { id: testCenterId, city });
+  return sessions.map((session: any) => ({
+    ...session,
+    site_id: normalizedCenter.test_center_id || testCenterId,
+    test_center_id: normalizedCenter.test_center_id || testCenterId,
+    test_center_name: normalizedCenter.test_center_name || session?.test_center_name || "",
+    site_city: normalizedCenter.city || session?.site_city || city,
+    test_center: {
+      ...(session?.test_center || {}),
+      id: normalizedCenter.id || session?.test_center?.id || testCenterId,
+      test_center_id: normalizedCenter.test_center_id || session?.test_center?.test_center_id || testCenterId,
+      name: normalizedCenter.name || session?.test_center?.name || session?.test_center?.test_center_name || "",
+      test_center_name: normalizedCenter.test_center_name || session?.test_center?.test_center_name || session?.test_center?.name || "",
+      city: normalizedCenter.city || session?.test_center?.city || session?.test_center?.test_center_city || city,
+      test_center_city: normalizedCenter.city || session?.test_center?.test_center_city || session?.test_center?.city || city,
+    },
+  }));
+}
+
+function rawSessionMatchesCenter(session: any, testCenterId: string): boolean {
+  return Boolean(getSessionCenterId(session)) &&
+    String(getSessionCenterId(session)) === String(testCenterId);
+}
+
+async function fetchOfficialCenterSessions(
+  categoryId: string,
+  city: string,
+  examDate: string,
+  testCenterId: string,
+  token: string,
+): Promise<any[]> {
+  const params = new URLSearchParams({
+    category_id: categoryId,
+    city,
+    exam_date: examDate,
+    test_center_id: testCenterId,
+    country_id: SVP_COUNTRY_ID,
+    available_seats: "greater_than::0",
+    status: "scheduled",
+    per_page: "10000",
+  });
+  const payload = await svpFetch(
+    buildPath("/api/v1/individual_labor_space/exam_sessions", params.toString()),
+    { method: "GET", token },
+  );
+  return extractSessions(payload).filter((session: any) => rawSessionMatchesCenter(session, testCenterId));
+}
+
+// ΓöÇΓöÇ Main handler ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -495,16 +799,20 @@ Deno.serve(async (req) => {
   try {
     const { user, svpToken } = await requireAuth(req);
 
-    // ── Available dates (with fallbacks) ──────────────────────
+    // ΓöÇΓöÇ Available dates (with fallbacks) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/available-dates") {
       const paths = [
         "/api/v1/individual_labor_space/exam_sessions/available_dates",
         "/api/v1/individual_labor_space/available_dates",
         "/api/v1/individual_labor_space/available-dates",
       ];
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+      params.set("per_page", params.get("per_page") || "10000");
       for (let i = 0; i < paths.length; i++) {
         try {
-          const data = await svpFetch(buildPath(paths[i], query), { method: "GET", token: svpToken });
+          const data = await svpFetch(buildPath(paths[i], params.toString()), { method: "GET", token: svpToken });
           return json(data);
         } catch (err: any) {
           if (err?.statusCode !== 404) throw err;
@@ -513,9 +821,7 @@ Deno.serve(async (req) => {
 
       // The official SVP date routes are not consistently available. Use the
       // corresponding t2hub calendar endpoint when all of them return 404.
-      const params = new URLSearchParams(query);
-      params.delete("locale");
-      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", params)));
+      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", params), req));
     }
 
     // Keep the existing `/occupations` client contract, while using t2hub's
@@ -530,11 +836,99 @@ Deno.serve(async (req) => {
         if (err?.statusCode !== 404) throw err;
         const params = new URLSearchParams(query);
         params.delete("locale");
-        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params)));
+        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
       }
     }
 
-    // ── t2hub city test centers ──────────────────────────────
+    // ΓöÇΓöÇ Live SVP cities and test centers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (req.method === "GET" && path === "/cities") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+      params.set("per_page", params.get("per_page") || "10000");
+      const data = await svpFetch(buildPath("/api/v1/individual_labor_space/test_centers/cities", params.toString()), {
+        method: "GET",
+        token: svpToken,
+      });
+      const cities = extractCities(data);
+      return json({ cities, data: cities });
+    }
+
+    if (req.method === "GET" && path === "/test-centers") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      // A test-centre roster is city/country scoped. Occupation/category
+      // filtering belongs to exam-session availability, not centre discovery;
+      // forwarding category_id here can incorrectly hide valid centres.
+      params.delete("category_id");
+      params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+      params.set("per_page", params.get("per_page") || "10000");
+      const requestedCity = normalizeCityName(params.get("city"));
+      params.delete("city");
+      const data = await svpFetch(buildPath("/api/v1/visitor_space/test_centers", params.toString()), {
+        method: "GET",
+        token: svpToken,
+      });
+      const centers = extractTestCenters(data)
+        .map(normalizeTestCenter)
+        .filter((center: any) => !requestedCity || String(center.city).toLowerCase() === requestedCity.toLowerCase())
+        .filter((center: any) => center.test_center_id && center.test_center_name);
+      return json({ test_centers: centers, centers, city: requestedCity });
+    }
+
+    // ΓöÇΓöÇ Date-scoped centre availability ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // The SVP available-dates endpoint is city-level. This route deliberately
+    // checks every real centre for the selected date so the UI never offers a
+    // centre that has no scheduled session on that date.
+    if (req.method === "GET" && path === "/center-session-availability") {
+      const params = new URLSearchParams(query);
+      const categoryId = params.get("category_id") || "";
+      const requestedCity = normalizeCityName(params.get("city"));
+      const examDate = params.get("exam_date") || params.get("test_date") || "";
+      if (!categoryId || !requestedCity || !examDate) {
+        throw { statusCode: 400, message: "Missing category_id, city, or exam_date" };
+      }
+
+      const centerPayload = await svpFetch(buildPath("/api/v1/visitor_space/test_centers", new URLSearchParams({
+        category_id: categoryId,
+        country_id: SVP_COUNTRY_ID,
+        per_page: "10000",
+      }).toString()), { method: "GET", token: svpToken });
+      const centers = extractTestCenters(centerPayload)
+        .map(normalizeTestCenter)
+        .filter((center: any) => String(center.city).toLowerCase() === requestedCity.toLowerCase())
+        .filter((center: any) => center.test_center_id && center.test_center_name);
+
+      const availability = await Promise.all(centers.map(async (center: any) => {
+        const siteId = String(center.test_center_id);
+        try {
+          const sessions = await fetchOfficialCenterSessions(categoryId, requestedCity, examDate, siteId, svpToken);
+          return {
+            ...center,
+            session_count: sessions.length,
+            lookup_status: "ok",
+          };
+        } catch {
+          // An unverified centre is not offered for booking. Returning zero
+          // keeps the UI safe instead of guessing that the city has a session.
+          return {
+            ...center,
+            session_count: 0,
+            lookup_status: "error",
+          };
+        }
+      }));
+
+      return json({
+        city: requestedCity,
+        category_id: categoryId,
+        exam_date: examDate,
+        centers: availability,
+        available_centers: availability.filter((center: any) => center.session_count > 0 && center.lookup_status === "ok"),
+      });
+    }
+
+    // ΓöÇΓöÇ t2hub city test centers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/t2hub/test-centers") {
       const params = new URLSearchParams(query);
       params.delete("locale");
@@ -544,27 +938,27 @@ Deno.serve(async (req) => {
       if (!city) throw { statusCode: 400, message: "Missing city or division" };
       params.delete("city");
       params.set("division", city);
-      const data = await t2hubFetch(t2hubQuery("/test-centers", params));
+      const data = await t2hubFetch(t2hubQuery("/test-centers", params), req);
       return json(data);
     }
 
     // These routes are intentionally proxied: t2hub responses are encrypted
     // (`x-encrypted: 1`) and browser callers are subject to cross-origin rules.
     if (req.method === "GET" && path === "/t2hub/occupations") {
-      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", new URLSearchParams(query))));
+      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", new URLSearchParams(query)), req));
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
-      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query))));
+      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req));
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-sessions-bulk") {
-      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query))));
+      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query)), req));
     }
 
-    // ── t2hub bulk exam sessions (CSRF-protected POST) ─────────
+    // ΓöÇΓöÇ t2hub bulk exam sessions (CSRF-protected POST) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Batches multiple {category_id, city, exam_date, center_token, center}
-    // lookups into a single request — more efficient than repeated single-city
+    // lookups into a single request ΓÇö more efficient than repeated single-city
     // calls to /pacc-exam-sessions when checking several centers/dates at once.
     if (req.method === "POST" && path === "/t2hub/exam-sessions-bulk") {
       const body = await req.json().catch(() => ({}));
@@ -572,11 +966,11 @@ Deno.serve(async (req) => {
       if (!Array.isArray(requests) || !requests.length) {
         throw { statusCode: 400, message: "Missing requests array" };
       }
-      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests });
+      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests }, req);
       return json(data);
     }
 
-    // ── t2hub city-wide PACC sessions ────────────────────────
+    // ΓöÇΓöÇ t2hub city-wide PACC sessions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/t2hub/pacc-exam-sessions") {
       const params = new URLSearchParams(query);
       params.delete("locale");
@@ -588,8 +982,8 @@ Deno.serve(async (req) => {
       }
 
       const [centersData, sessionsData] = await Promise.all([
-        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city }))),
-        t2hubFetch(t2hubQuery("/exam-sessions-bulk", params)),
+        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
+        t2hubFetch(t2hubQuery("/exam-sessions-bulk", params), req),
       ]);
       const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
       const centerByName = new Map(
@@ -601,7 +995,59 @@ Deno.serve(async (req) => {
       return json({ ...sessionsData, sessions, exam_sessions: sessions, sites: centers });
     }
 
-    // ── Exam sessions (enriched with available_seats) ────────
+    // ΓöÇΓöÇ Strict center-scoped live SVP exam sessions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (req.method === "GET" && path === "/exam-sessions") {
+      const params = new URLSearchParams(query);
+      const categoryId = params.get("category_id") || "";
+      const city = normalizeCityName(params.get("city"));
+      const examDate = params.get("exam_date") || params.get("test_date") || "";
+      const testCenterId = params.get("test_center_id") || "";
+      if (categoryId && city && examDate && testCenterId) {
+        params.delete("locale");
+        params.delete("test_date");
+        params.set("exam_date", examDate);
+        params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+        params.set("available_seats", "greater_than::0");
+
+        const [sessionPayload, centerPayload] = await Promise.all([
+          svpFetch(buildPath("/api/v1/individual_labor_space/exam_sessions", params.toString()), {
+            method: "GET",
+            token: svpToken,
+          }),
+          svpFetch(buildPath("/api/v1/visitor_space/test_centers", new URLSearchParams({
+            category_id: categoryId,
+            country_id: SVP_COUNTRY_ID,
+            per_page: "10000",
+          }).toString()), { method: "GET", token: svpToken }),
+        ]);
+
+        const centers = extractTestCenters(centerPayload).map(normalizeTestCenter);
+        const selectedCenter = centers.find((center: any) =>
+          String(center.test_center_id) === String(testCenterId) &&
+          (!center.city || center.city.toLowerCase() === city.toLowerCase())
+        );
+        const rawSessions = extractSessions(sessionPayload);
+        const sessions = rawSessions
+          .filter((session: any) => {
+            const sessionCenterId = session?.test_center_id ?? session?.test_center?.test_center_id ?? session?.test_center?.id ?? session?.site_id;
+            return sessionCenterId == null || String(sessionCenterId) === String(testCenterId);
+          })
+          .map((session: any) => enrichSessionsForCenter(rawSessions.length ? [session] : [], selectedCenter, testCenterId, city)[0]);
+
+        return json({
+          ...((sessionPayload && typeof sessionPayload === "object" && !Array.isArray(sessionPayload)) ? sessionPayload : {}),
+          exam_sessions: sessions,
+          sessions,
+          test_center: selectedCenter || null,
+          test_center_id: String(testCenterId),
+          test_center_name: selectedCenter?.test_center_name || "",
+          city,
+          exam_date: examDate,
+        });
+      }
+    }
+
+    // ΓöÇΓöÇ Exam sessions (enriched with available_seats) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/exam-sessions") {
       const sessionParams = new URLSearchParams(query);
       const city = sessionParams.get("city") || "";
@@ -611,16 +1057,26 @@ Deno.serve(async (req) => {
         try {
           sessionParams.delete("locale");
           const [centersData, sessionsData] = await Promise.all([
-            t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city }))),
-            t2hubFetch(t2hubQuery("/exam-sessions-bulk", sessionParams)),
+            t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
+            t2hubFetch(t2hubQuery("/exam-sessions-bulk", sessionParams), req),
           ]);
           const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
           const centerByName = new Map(
             centers.map((center: any) => [String(center?.name || "").trim().toLowerCase(), center])
           );
-          const sessions = (Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [])
+          const requestedCenterId = String(sessionParams.get("test_center_id") || "").trim();
+          const normalizedSessions = (Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [])
             .map((item: any) => normalizeT2HubSession(item, centerByName));
-          return json({ ...sessionsData, sessions, exam_sessions: sessions, sites: centers });
+          const sessions = requestedCenterId
+            ? filterLiveSessionsForCenter(normalizedSessions, requestedCenterId)
+            : normalizedSessions.filter((session: any) => Boolean(getSessionCenterId(session)));
+          return json({
+            ...sessionsData,
+            sessions,
+            exam_sessions: sessions,
+            sites: centers,
+            ...(requestedCenterId ? { test_center_id: requestedCenterId } : {}),
+          });
         } catch {
           // Fall back to the official SVP endpoint below if t2hub is unavailable.
         }
@@ -658,7 +1114,7 @@ Deno.serve(async (req) => {
       return json(listData);
     }
 
-    // ── User balance (auto-detect SVP user ID) ───────────────
+    // ΓöÇΓöÇ User balance (auto-detect SVP user ID) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/user-balance") {
       const supabase = getSupabase();
       const { data: session } = await supabase
@@ -684,7 +1140,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Ticket PDF ────────────────────────────────────────────
+    // ΓöÇΓöÇ Ticket PDF ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     const pdfMatch = path.match(/^\/tickets\/([^/]+)\/show-pdf$/);
     if (req.method === "GET" && pdfMatch) {
       await requireAccessPermission(req, "reservation.manage");
@@ -705,7 +1161,29 @@ Deno.serve(async (req) => {
       return new Response(await upstream.arrayBuffer(), { status: 200, headers });
     }
 
-    // ── Standard routes ──────────────────────────────────────
+    // ΓöÇΓöÇ Center-bound temporary seat hold ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (req.method === "POST" && path === "/temporary-seats") {
+      const body = await req.json().catch(() => ({}));
+      const examSessionId = body?.exam_session_id;
+      const testCenterId = body?.test_center_id;
+      if (examSessionId === undefined || examSessionId === null || examSessionId === "") {
+        throw { statusCode: 400, message: "Missing exam_session_id" };
+      }
+      if (testCenterId === undefined || testCenterId === null || testCenterId === "") {
+        throw { statusCode: 400, message: "Missing test_center_id" };
+      }
+      const data = await svpFetch("/api/v1/individual_labor_space/temporary_seats", {
+        method: "POST",
+        token: svpToken,
+        body: {
+          exam_session_id: examSessionId,
+          test_center_id: testCenterId,
+        },
+      });
+      return json(data);
+    }
+
+    // ΓöÇΓöÇ Standard routes ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     for (const route of routes) {
       if (req.method !== route.method) continue;
       const match = path.match(route.pattern);
@@ -713,6 +1191,16 @@ Deno.serve(async (req) => {
 
       const svpPath = typeof route.svpPath === "function" ? route.svpPath(match, query) : route.svpPath;
       const body = route.bodyForward ? await req.json().catch(() => ({})) : undefined;
+      const isReservationWrite = req.method === "POST" &&
+        (path === "/exam-reservations" || /^\/exam-reservations\/[^/]+\/reschedule$/.test(path));
+      if (isReservationWrite) {
+        const requestedSessionId = body?.exam_session_id;
+        const requestedCenterId = body?.test_center_id;
+        if (requestedSessionId === undefined || requestedSessionId === null || requestedSessionId === "") {
+          throw { statusCode: 400, code: "SESSION_BINDING_REQUIRED", message: "Selected exam session is required" };
+        }
+        await assertSvpSessionMatchesCenter(svpToken, requestedSessionId, requestedCenterId);
+      }
 
       const billingOperation = getReservationBillingOperation(req.method, path);
       const isBookingCreate = billingOperation === "booking";
@@ -751,10 +1239,42 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const data: any = await svpFetch(buildPath(svpPath, query), { method: route.method, token: svpToken, body });
+        const reservationLookupId = route.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path)
+          ? getReservationLookupId(path, query)
+          : "";
+        let data: any;
+        if (route.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path) && reservationLookupId) {
+          const collectionPayload = await svpFetch(
+            buildPath(svpPath, buildReservationCollectionQuery(query)),
+            { method: route.method, token: svpToken },
+          );
+          const matchingRows = filterReservationRows(collectionPayload, reservationLookupId);
+          if (!matchingRows.length) {
+            throw {
+              statusCode: 404,
+              message: "Reservation not found",
+              details: { reservation_id: reservationLookupId },
+            };
+          }
+          data = reshapeReservationPayload(collectionPayload, matchingRows);
+        } else {
+          data = await svpFetch(buildPath(svpPath, query), {
+            method: route.method,
+            token: svpToken,
+            body,
+          });
+        }
         if (isChargeableBooking && accessContext?.account.permission_mode === "MANAGED") {
           const reservationId = findReservationId(data) ||
-            (isBookingReschedule ? String(match[1]) : `svp-success:${req.headers.get("x-request-id") || walletHoldId}`);
+            (isBookingReschedule ? String(match[1]) : "");
+          if (!canFinalizeWalletDebit(billingOperation, reservationId)) {
+            throw {
+              statusCode: 502,
+              code: "WALLET_DEBIT_BLOCKED_NO_RESERVATION_ID",
+              message: "Reservation completed without a reservation ID; wallet debit was not finalized",
+              details: { operation: billingOperation, wallet_hold_id: walletHoldId },
+            };
+          }
           let walletTransaction: any = null;
           if (walletHoldId) {
             const { data: completedTransaction, error: completeError } = await accessContext.supabase.rpc("wallet_complete_booking_hold", {
@@ -787,7 +1307,24 @@ Deno.serve(async (req) => {
 
     return json({ error: "Not found" }, 404);
   } catch (err: any) {
-    const status = err?.statusCode || 500;
-    return json({ message: err?.message || "Server error", details: err?.details }, status);
+    const status = Number(err?.statusCode || 500);
+    const code = err?.code || (status === 401 ? "AUTH_REQUIRED" : "SVP_PROXY_ERROR");
+    const message = err?.message || "Server error";
+    // Surface both the nested and flat shape so legacy client code that
+    // reads data.message keeps working alongside new code that reads
+    // data.code (e.g. the booking page's t2hub-missing bridge trigger).
+    return json(
+      {
+        message,
+        code,
+        error: {
+          code,
+          message,
+          request_id: req.headers.get("x-request-id") || null,
+        },
+        request_id: req.headers.get("x-request-id") || null,
+      },
+      status,
+    );
   }
 });

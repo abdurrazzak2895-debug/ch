@@ -79,7 +79,7 @@ export default function TakamolDashboardPage() {
             <h1>Takamol Exam Console</h1>
             <p>
               Live dashboard backed by{" "}
-              <code style={{ color: "var(--tk-gold)" }}>playwright-mcp-vnc-production.up.railway.app</code>
+              <code style={{ color: "var(--tk-gold)" }}>takamol-api.up.railway.app</code>
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

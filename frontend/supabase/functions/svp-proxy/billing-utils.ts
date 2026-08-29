@@ -9,3 +9,10 @@ export function getReservationBillingOperation(
   if (/^\/exam-reservations\/[^/]+\/reschedule$/.test(path)) return "reschedule";
   return null;
 }
+
+export function canFinalizeWalletDebit(
+  operation: ReservationBillingOperation | null,
+  reservationId: string | number | null | undefined,
+): boolean {
+  return operation !== null && String(reservationId ?? "").trim().length > 0;
+}

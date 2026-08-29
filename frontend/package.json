@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "auth:fixture": "node scripts/local-auth-fixture.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

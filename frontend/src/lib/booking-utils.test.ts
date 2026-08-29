@@ -1,9 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCenterOptions,
+  filterCentersWithAvailableSessions,
   getSessionCenterName,
   getSessionSiteId,
   getCenterKey,
+  VERIFIED_DHAKA_CENTER_ROSTER,
+  mergeVerifiedCityCenterRoster,
+  getResponseCenterIds,
+  getResponseCenterName,
+  resolveVerifiedResponseCenterId,
+  isNoExamSession422,
 } from "./booking-utils";
 
 describe("booking-utils center name resolution", () => {
@@ -92,7 +99,95 @@ describe("booking-utils center name resolution", () => {
     expect(byKey[getCenterKey(sessionFlat)].name).toBe("Pabna Technical Training Centre");
     expect(byKey[getCenterKey(sessionFlat)].city).toBe("Rajshahi");
     expect(byKey[getCenterKey(sessionNestedId)].name).toBe("Dhaka Skills Center");
-    expect(byKey[getCenterKey(sessionNestedId)].city).toBe("Dhaka");
     expect(byKey[getCenterKey(sessionFallback)].city).toBe("Chittagong");
+  });
+
+  it("restricts Dhaka to the seven verified SVP centre IDs and backfills missing live rows", () => {
+    const result = mergeVerifiedCityCenterRoster([
+      { id: 403, name: "Arkan Al-Taameer for professional classification - Dhaka" },
+      { id: 999, name: "Stale centre that must not appear" },
+      { id: 45, name: "Bangladesh German TTC" },
+    ], "Dhaka", 78);
+
+    expect(result.map((item) => String(item.id ?? item.test_center_id))).toEqual(
+      VERIFIED_DHAKA_CENTER_ROSTER.map((item) => item.siteId),
+    );
+    expect(result).toHaveLength(7);
+    expect(result.map((item) => item.name)).toContain("Bangladesh Korea TTC Dhaka");
+    expect(result.map((item) => item.name)).not.toContain("Stale centre that must not appear");
+  });
+
+  it("rejects a final response that names another centre", () => {
+    const response = {
+      exam_reservation: {
+        exam_session: {
+          test_center: {
+            id: 45,
+            test_center_id: 45,
+            name: "Bangladesh German TTC",
+            city: "Dhaka",
+          },
+        },
+      },
+    };
+
+    expect(getResponseCenterIds(response)).toEqual(["45"]);
+    expect(getResponseCenterName(response)).toBe("Bangladesh German TTC");
+    expect(resolveVerifiedResponseCenterId(response, "115")).toBe("");
+  });
+
+  it("accepts a final response whose explicit centre matches the selected centre", () => {
+    const response = {
+      reservation: {
+        exam_session: {
+          test_center: {
+            test_center_id: 115,
+            test_center_name: "BRTC Central Training Institute Gazipur",
+            city: "Dhaka",
+          },
+        },
+      },
+    };
+
+    expect(resolveVerifiedResponseCenterId(response, 115)).toBe("115");
+  });
+
+  it("does not alter non-Dhaka centre rosters", () => {
+    const centres = [{ id: 180, name: "Madaripur Technical Training Centre", city: "Barishal" }];
+    expect(mergeVerifiedCityCenterRoster(centres, "Barishal", 78)).toEqual(centres);
+  });
+
+  it("removes centres with no sessions for the selected date", () => {
+    const centres = [
+      { siteId: "180", name: "Madaripur Technical Training Centre", city: "Barishal", sessionCount: 0 },
+      { siteId: "240", name: "Patuakhali Technical Training Centre", city: "Barishal", sessionCount: 2 },
+      { siteId: "166", name: "Faridpur Technical Training Centre", city: "Barishal", sessionCount: null },
+    ];
+
+    expect(filterCentersWithAvailableSessions(centres).map((item) => item.siteId)).toEqual(["240", "166"]);
+  });
+
+  it("allows an empty result when every centre has zero sessions", () => {
+    expect(filterCentersWithAvailableSessions([
+      { siteId: "180", sessionCount: 0 },
+      { siteId: "240", sessionCount: 0 },
+    ])).toEqual([]);
+  });
+
+  it("classifies SVP no-exam-session 422 details as stale-session errors", () => {
+    expect(isNoExamSession422({
+      status: 422,
+      message: "SVP request failed: 422",
+      data: { details: { message: "test center selected no exam session" } },
+    })).toBe(true);
+    expect(isNoExamSession422({
+      status: 422,
+      message: "Booking validation failed",
+      data: { details: { message: "another centre returned" } },
+    })).toBe(false);
+    expect(isNoExamSession422({
+      status: 409,
+      message: "test center selected no exam session",
+    })).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ name: Deploy Supabase (functions + migrations)
 
 on:
   push:
-    branches: [main]
+    branches: [main, agents/hi]
     paths:
       - "frontend/supabase/functions/**"
       - "frontend/supabase/migrations/**"
@@ -16,6 +16,8 @@ jobs:
       # `if:` conditional — it fails to parse with "Unrecognized named-value:
       # 'secrets'". Map it to a job-level env var here, then check env.* below.
       HAS_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD != '' }}
+      HAS_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+      HAS_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,6 +26,16 @@ jobs:
         uses: supabase/setup-cli@v1
         with:
           version: latest
+
+      - name: Check required secrets
+        run: |
+          echo "SUPABASE_ACCESS_TOKEN present: $HAS_ACCESS_TOKEN"
+          echo "SUPABASE_PROJECT_ID present: $HAS_PROJECT_ID"
+          echo "SUPABASE_DB_PASSWORD present: $HAS_DB_PASSWORD"
+          if [ "$HAS_ACCESS_TOKEN" != "true" ] || [ "$HAS_PROJECT_ID" != "true" ]; then
+            echo "::error::One or more required secrets (SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID) are not set on this repository. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
 
       - name: Link project
         working-directory: frontend
@@ -47,7 +59,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          for fn in access-admin access-agency access-auth access-wallet svp-auth svp-proxy test-center-owner; do
+          for fn in access-admin access-agency access-auth access-wallet svp-auth svp-proxy takamol-proxy test-center-owner; do
             echo "── Deploying $fn ──"
             supabase functions deploy "$fn" --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
           done

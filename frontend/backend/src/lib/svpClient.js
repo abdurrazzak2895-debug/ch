@@ -1,3 +1,25 @@
+function getUpstreamMessage(data) {
+  const direct = data?.message || data?.error;
+  if (direct) return String(direct);
+  const nested = data?.errors?.temporaryseat?.labor_id;
+  if (Array.isArray(nested) && nested[0]) return String(nested[0]);
+  const firstError = Object.values(data?.errors || {}).flatMap((value) =>
+    Array.isArray(value) ? value : Object.values(value || {}).flatMap((item) => Array.isArray(item) ? item : [])
+  )[0];
+  return firstError ? String(firstError) : '';
+}
+
+function classifySvpError(statusCode, data) {
+  const text = String(data?.message || data?.error || data?.errors?.temporaryseat?.labor_id?.[0] || '').toLowerCase();
+  if (text.includes('active candidate account is required') || (text.includes('candidate account') && text.includes('required'))) {
+    return { statusCode, code: 'CANDIDATE_ACCOUNT_REQUIRED', message: 'Active candidate account is required' };
+  }
+  if (text.includes('labor_id') && text.includes('already been taken')) {
+    return { statusCode: 409, code: 'CANDIDATE_LABOR_ID_EXISTS', message: 'This candidate labor ID is already registered. Use the existing candidate account.' };
+  }
+  return { statusCode, code: statusCode === 422 ? 'SVP_VALIDATION_ERROR' : 'SVP_UPSTREAM_ERROR', message: data?.message || data?.error || `SVP request failed: ${statusCode}` };
+}
+
 export async function svpRequest(path, { method='GET', token, body } = {}) {
   const base = process.env.SVP_BASE_URL;
   const locale = process.env.SVP_LOCALE || 'en';
@@ -36,9 +58,12 @@ export async function svpRequest(path, { method='GET', token, body } = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
 
   if (!res.ok) {
-    const err = new Error(`SVP request failed: ${res.status}`);
-    err.statusCode = res.status;
-    err.details = data;
+    const normalized = classifySvpError(res.status, data);
+    const err = new Error(normalized.message);
+    err.statusCode = normalized.statusCode;
+    err.code = normalized.code;
+    err.details = { upstreamStatus: res.status };
+    err.upstreamMessage = getUpstreamMessage(data) || undefined;
     throw err;
   }
   return data;
@@ -82,9 +107,12 @@ export async function svpMultipartRequest(path, { contentType, body } = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
 
   if (!res.ok) {
-    const err = new Error(`SVP request failed: ${res.status}`);
-    err.statusCode = res.status;
-    err.details = data;
+    const normalized = classifySvpError(res.status, data);
+    const err = new Error(normalized.message);
+    err.statusCode = normalized.statusCode;
+    err.code = normalized.code;
+    err.details = { upstreamStatus: res.status };
+    err.upstreamMessage = getUpstreamMessage(data) || undefined;
     throw err;
   }
   return data;

@@ -17,18 +17,10 @@
 // current BookingPage.tsx new-booking path.
 
 import { describe, it, expect } from "vitest";
+import { buildExamReservationPayload, getSessionPayloadId } from "@/lib/booking-utils";
 
-// Mirror of the post-fix new-booking body construction in BookingPage.tsx.
-function getSessionPayloadId(value: string | number): number | string | null {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  const numeric = Number(raw);
-  if (Number.isFinite(numeric) && String(numeric) === raw) {
-    return numeric > 0 ? numeric : null;
-  }
-  return raw;
-}
-
+// The production builder below is also exercised directly in a regression
+// case; the legacy mirror remains for documenting the expected contract.
 function buildReservationBody(args: {
   sessionId: string | number;
   selectedOccupationId: string | number;
@@ -159,6 +151,25 @@ describe("BookingPage exam_reservations POST — SVP-frontend-parity payload", (
       id: 987654,
       exam_session_id: encrypted,
       language_code: "LOANN",
+    });
+  });
+
+  it("uses the production builder to preserve the selected encrypted session and clear center overrides", () => {
+    const encrypted = "L-iQDqXgIA---sS9xLf-Zor-lAFV--NtHYoNAduM7E8CLkoTMALQ";
+    const body = buildExamReservationPayload({
+      examSessionId: getSessionPayloadId(encrypted),
+      occupationId: 2061,
+      methodology: "in_person",
+      languageCode: "LOABB",
+    });
+    expect(body).toEqual({
+      exam_session_id: encrypted,
+      occupation_id: 2061,
+      methodology: "in_person",
+      language_code: "LOABB",
+      site_id: null,
+      site_city: null,
+      hold_id: null,
     });
   });
 

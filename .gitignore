@@ -120,4 +120,8 @@ supabase/.temp/
 
 # VS Code AI tooling (kilo) — local-only artifacts
 .kilo/
-preview.log
+.env*
+
+# Local secret value files consumed by scripts/set-vercel-env.ps1 and
+# scripts/set-gh-secret.ps1. NEVER commit.
+.secrets/

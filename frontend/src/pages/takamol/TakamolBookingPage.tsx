@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarCheck, CalendarDays, CheckCircle2, Clock3, MapPin, Save, Users } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
-import { CalendarCheck, MapPin, CalendarDays, Clock, Users, Save, ExternalLink } from "lucide-react";
 import { useTakamolAuth } from "@/contexts/TakamolAuthContext";
 import {
   getCategories,
@@ -8,318 +8,237 @@ import {
   getDates,
   getSessions,
   getReservation,
-  getTakamolBaseUrl,
   type TakamolCategory,
   type TakamolCenter,
   type TakamolDatesResult,
+  type TakamolSession,
 } from "@/lib/takamol-api";
 
-function normalizeSessions(raw: any): any[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  return raw.sessions || raw.dates || raw.data || [];
+const LANGUAGES = [
+  ["LOANN", "English (LOANN)"],
+  ["LOANN", "Nepali (LOANN)"],
+  ["LOAAR", "Arabic (LOAAR)"],
+  ["LOBEN", "Bengali (LOBEN)"],
+] as const;
+
+function listFrom<T = any>(value: any, keys: string[]): T[] {
+  if (Array.isArray(value)) return value;
+  for (const key of keys) if (Array.isArray(value?.[key])) return value[key];
+  return [];
+}
+
+function dateValue(row: any): string {
+  if (typeof row === "string") return row;
+  return String(row?.date || row?.exam_date || row?.start_date || row?.value || "");
+}
+
+function centerKey(center: any): string {
+  return String(center?.id ?? center?.site_id ?? center?.test_center_id ?? center?.name ?? center?.city ?? "");
+}
+
+function sessionCenterKey(session: any): string {
+  const center = session?.test_center || session?.center || {};
+  return String(
+    session?.test_center_id ?? session?.site_id ?? center?.id ?? center?.site_id ?? center?.test_center_id ?? center?.name ?? center?.city ?? ""
+  );
+}
+
+function centerName(center: any): string {
+  return String(center?.name || center?.test_center_name || center?.title || center?.city || "Live SVP Test Centre");
+}
+
+function sessionLabel(session: TakamolSession): string {
+  return String(session?.name || session?.title || session?.slot || session?.start_time || session?.start_date || session?.exam_date || "Available session");
 }
 
 export default function TakamolBookingPage() {
   const { loggedIn, refresh } = useTakamolAuth();
   const [searchParams] = useSearchParams();
-
   const [categories, setCategories] = useState<TakamolCategory[]>([]);
-  const [categoryId, setCategoryId] = useState<string>(searchParams.get("category_id") || "");
-
+  const [categoryId, setCategoryId] = useState(searchParams.get("category_id") || "");
   const [datesRes, setDatesRes] = useState<TakamolDatesResult | null>(null);
   const [centers, setCenters] = useState<TakamolCenter[]>([]);
   const [city, setCity] = useState("");
   const [date, setDate] = useState("");
-  const [sessions, setSessions] = useState<any[]>([]);
-
+  const [centerId, setCenterId] = useState("");
+  const [sessions, setSessions] = useState<TakamolSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [language, setLanguage] = useState("LOANN");
+  const [passportNumber, setPassportNumber] = useState("");
   const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  const [form, setForm] = useState<Record<string, string>>({
-    session_id: "",
-    passport_number: "",
-    nationality: "BGD",
-    full_name: "",
-  });
+  const selectedCategory = useMemo(() => categories.find((item) => String(item.id) === String(categoryId)), [categories, categoryId]);
+  const availableCities = useMemo(() => Array.from(new Set((datesRes?.cities || []).filter(Boolean).map(String))), [datesRes]);
+  const availableDates = useMemo(() => {
+    const values = (datesRes?.dates || []).map(dateValue).filter(Boolean);
+    return Array.from(new Set(values));
+  }, [datesRes]);
+  const selectedCenter = useMemo(() => centers.find((item) => centerKey(item) === centerId) || null, [centers, centerId]);
+  const centerSessions = useMemo(() => {
+    if (!centerId) return sessions;
+    const matching = sessions.filter((item) => {
+      const key = sessionCenterKey(item);
+      return !key || key === centerId || key.toLowerCase() === centerName(selectedCenter).toLowerCase();
+    });
+    return matching.length ? matching : sessions;
+  }, [centerId, selectedCenter, sessions]);
 
-  const baseUrl = getTakamolBaseUrl();
-
-  const selectedCategory = useMemo(
-    () => categories.find((c) => String(c.id) === String(categoryId)) || null,
-    [categories, categoryId]
-  );
-
-  const cities = useMemo(() => datesRes?.cities || [], [datesRes]);
-  const dateRows = useMemo(() => datesRes?.dates || [], [datesRes]);
   const loadCategories = useCallback(async () => {
     try {
-      const res = await getCategories();
-      const list = Array.isArray(res) ? res : (res?.categories || []);
-      setCategories(list);
+      setLoading(true);
+      setError(null);
+      const response = await getCategories();
+      setCategories(listFrom<TakamolCategory>(response, ["categories", "data"]));
     } catch (err: any) {
-      setError(err?.message || "Failed to load categories");
+      setError(err?.message || "Failed to load occupations");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
+  useEffect(() => { loadCategories(); }, [loadCategories]);
 
-  const pickCategory = useCallback(
-    async (id: string) => {
-      setCategoryId(id);
-      setDatesRes(null);
-      setCenters([]);
-      setCity("");
-      setDate("");
-      setSessions([]);
-      setError(null);
-      setOk(null);
-      if (!id) return;
-      setLoading(true);
-      try {
-        const body: Record<string, unknown> = { category_id: Number(id) };
-        if (city) body.city = city;
-        const [d, c] = await Promise.all([getDates(body), getCenters(body)]);
-        setDatesRes(d);
-        setCenters(c?.centers || (Array.isArray(c) ? c : []));
-      } catch (err: any) {
-        setError(err?.message || "Failed to load dates/centers");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [city]
-  );
-
-  const loadSessions = useCallback(async () => {
-    if (!categoryId || !date) return;
-    setBusy(true);
+  const selectCategory = useCallback(async (value: string) => {
+    setCategoryId(value);
+    setCity("");
+    setDate("");
+    setCenterId("");
+    setSessions([]);
+    setSelectedSessionId("");
+    setDatesRes(null);
+    setCenters([]);
     setError(null);
     setOk(null);
+    if (!value) return;
+    setLoading(true);
     try {
-      const body: Record<string, unknown> = {
-        category_id: Number(categoryId),
-        exam_date: date,
-      };
-      if (city) body.city = city;
-      const res = await getSessions(body);
-      setSessions(normalizeSessions(res));
+      const response = await getDates({ category_id: Number(value) });
+      setDatesRes(response);
     } catch (err: any) {
-      setError(err?.message || "Failed to load sessions");
+      setError(err?.message || "Failed to load cities for this occupation");
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
-  }, [categoryId, city, date]);
+  }, []);
+
+  const selectCity = useCallback(async (value: string) => {
+    setCity(value);
+    setDate("");
+    setCenterId("");
+    setSessions([]);
+    setSelectedSessionId("");
+    setCenters([]);
+    setError(null);
+    if (!value || !categoryId) return;
+    setLoading(true);
+    try {
+      const response = await getDates({ category_id: Number(categoryId), city: value });
+      setDatesRes(response);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load exam dates");
+    } finally {
+      setLoading(false);
+    }
+  }, [categoryId]);
+
+  const selectDate = useCallback(async (value: string) => {
+    setDate(value);
+    setCenterId("");
+    setSelectedSessionId("");
+    setSessions([]);
+    setCenters([]);
+    setError(null);
+    if (!value || !categoryId || !city) return;
+    setSearching(true);
+    try {
+      const body = { category_id: Number(categoryId), city, exam_date: value };
+      const [centerResponse, sessionResponse] = await Promise.all([getCenters(body), getSessions(body)]);
+      const centerList = listFrom<TakamolCenter>(centerResponse, ["centers", "data"]);
+      const sessionList = listFrom<TakamolSession>(sessionResponse, ["sessions", "data"]);
+      setCenters(centerList);
+      setSessions(sessionList);
+      if (centerList.length === 1) setCenterId(centerKey(centerList[0]));
+    } catch (err: any) {
+      setError(err?.message || "Failed to load available centres and sessions");
+    } finally {
+      setSearching(false);
+    }
+  }, [categoryId, city]);
 
   const submitReservation = useCallback(async () => {
-    if (!form.session_id || !form.passport_number) {
-      setError("Select a session and enter a passport number.");
+    if (!selectedSessionId || !passportNumber.trim()) {
+      setError("Select an available session and enter a passport number.");
       return;
     }
     setBusy(true);
     setError(null);
     setOk(null);
     try {
-      const body: Record<string, unknown> = {
+      const response = await getReservation({
         category_id: Number(categoryId),
-        session_id: form.session_id,
-        passport_number: form.passport_number,
-        nationality: form.nationality,
-      };
-      if (form.full_name) body.full_name = form.full_name;
-      const res = await getReservation(body);
-      setOk(typeof res === "string" ? res : JSON.stringify(res, null, 2));
+        city,
+        exam_date: date,
+        test_center_id: centerId,
+        session_id: selectedSessionId,
+        language,
+        passport_number: passportNumber.trim().toUpperCase(),
+        nationality: "BGD",
+      });
+      setOk(typeof response === "string" ? response : "Reservation request completed successfully.");
     } catch (err: any) {
-      setError(err?.message || "Reservation failed. Is the portal session active?");
+      setError(err?.message || "Reservation failed. Please verify the live portal session.");
     } finally {
       setBusy(false);
     }
-  }, [categoryId, form]);
+  }, [categoryId, city, date, centerId, language, passportNumber, selectedSessionId]);
 
   return (
-    <div className="tk-container" style={{ padding: 0 }}>
-      <div className="tk-hero">
-        <div className="tk-card-header" style={{ marginBottom: 6 }}>
+    <div className="tk-container tk-booking-page" style={{ padding: 0 }}>
+      <section className="tk-hero tk-booking-hero">
+        <div className="tk-card-header">
           <div>
-            <h1>Book an Exam</h1>
-            <p>Pick a category, then the backend queries the portal for centers, dates and open sessions.</p>
+            <p className="tk-eyebrow">TAKAMOL SVP BOOKING</p>
+            <h1>Find Exam Center</h1>
+            <p>Only test centres with an available session on the selected date are shown.</p>
           </div>
-          <span className={loggedIn ? "tk-badge tk-badge--ok" : "tk-badge tk-badge--warn"}>
-            {loggedIn ? "Logged in" : "Needs login"}
-          </span>
+          <span className={loggedIn ? "tk-badge tk-badge--ok" : "tk-badge tk-badge--warn"}>{loggedIn ? "Live session" : "Login required"}</span>
         </div>
         <div className="tk-hero-actions">
-          <button type="button" className="tk-btn tk-btn--sm" onClick={() => refresh()}>
-            <CalendarCheck size={14} /> Refresh status
-          </button>
-          {!loggedIn && (
-            <a className="tk-btn tk-btn--sm tk-btn--gold" href={`/takamol/login`}>
-              <ExternalLink size={14} /> Login first
-            </a>
-          )}
+          {!loggedIn && <a className="tk-btn tk-btn--gold" href="/takamol/agent/login">Login to Takamol</a>}
+          <button type="button" className="tk-btn tk-btn--sm" onClick={() => refresh()}><CalendarCheck size={14} /> Refresh portal status</button>
         </div>
-      </div>
+      </section>
 
       {error && <div className="tk-msg tk-msg--error">{error}</div>}
-      {ok && <div className="tk-msg tk-msg--ok"><pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: "0.85rem" }}>{ok}</pre></div>}
+      {ok && <div className="tk-msg tk-msg--ok"><CheckCircle2 size={16} /> {ok}</div>}
 
-      <div className="tk-card">
-        <h2>Step 1 · Category</h2>
-        <div className="tk-field">
-          <label>Exam category</label>
-          <select value={categoryId} onChange={(e) => pickCategory(e.target.value)} disabled={loading}>
-            <option value="">— Select category —</option>
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>{cat.name} (ID {cat.id})</option>
-            ))}
-          </select>
-        </div>
-        {selectedCategory && (
-          <span className="tk-badge tk-badge--info">Selected: {selectedCategory.name}</span>
-        )}
-      </div>
-
-      <div className="tk-card">
-        <h2>Step 2 · Center, city &amp; date</h2>
-        {loading ? (
-          <div className="tk-loading"><span className="tk-spinner" /> Loading dates &amp; centers…</div>
-        ) : !categoryId ? (
-          <div className="tk-empty">Select a category first.</div>
-        ) : (
-          <div className="tk-grid tk-grid-2">
-            <div className="tk-field">
-              <label><MapPin size={13} style={{ verticalAlign: "-2px" }} /> City</label>
-              <select value={city} onChange={(e) => setCity(e.target.value)}>
-                <option value="">— Any city —</option>
-                {cities.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-                {centers.map((ctr) => (
-                  <option key={`ctr-${ctr.id ?? ctr.name ?? ctr.city}`} value={ctr.city || ctr.name}>
-                    {(ctr.name || ctr.city || "Center")}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="tk-field">
-              <label><CalendarDays size={13} style={{ verticalAlign: "-2px" }} /> Exam date</label>
-              <select value={date} onChange={(e) => setDate(e.target.value)}>
-                <option value="">— Pick date —</option>
-                {dateRows.map((d: any, i: number) => {
-                  const val = d?.date || d?.exam_date || d?.start_date || d?.value || String(d);
-                  return <option key={i} value={String(val)}>{String(val)}</option>;
-                })}
-              </select>
-            </div>
-          </div>
-        )}
-        {!loading && !datesRes && categoryId && (
-          <div className="tk-msg tk-msg--info">
-            No dates/cities returned — the portal may need an active session. Retry after logging in.
-          </div>
-        )}
-      </div>
-
-      <div className="tk-card">
-        <div className="tk-card-header">
-          <h2><Clock size={17} style={{ verticalAlign: "-3px", marginRight: 7 }} />Step 3 · Sessions</h2>
-          <button type="button" className="tk-btn tk-btn--sm" onClick={loadSessions} disabled={busy || !date}>
-            {busy ? <span className="tk-spinner" style={{ width: 13, height: 13 }} /> : <Users size={14} />}
-            Load sessions
-          </button>
-        </div>
-        {busy ? (
-          <div className="tk-loading"><span className="tk-spinner" /> Loading sessions…</div>
-        ) : sessions.length === 0 ? (
-          <div className="tk-empty">No sessions loaded yet. Pick a date above and press “Load sessions”.</div>
-        ) : (
-          <div>
-            {sessions.slice(0, 40).map((s, i) => {
-              const sid = String(s?.id ?? s?.session_id ?? s?.sessionId ?? i);
-              const start = s?.start_date || s?.start_date_in_browser_time_zone || s?.exam_date || s?.date || "";
-              const seats = s?.available_seats ?? s?.seats ?? s?.capacity ?? "";
-              const center = s?.test_center?.name || s?.center || s?.center_name || "";
-              const st = s?.status || "open";
-              return (
-                <div key={sid} className="tk-row">
-                  <div className="tk-row-main">
-                    <div className="tk-row-title">
-                      {start ? String(start) : `Session ${sid}`} {center && `· ${center}`}
-                    </div>
-                    <div className="tk-row-sub">
-                      Session ID: <code>{sid}</code>
-                      {seats !== "" && ` · Seats: ${seats}`} · Status: {st}
-                    </div>
-                  </div>
-                  <div className="tk-row-actions">
-                    <button
-                      type="button"
-                      className={form.session_id === sid ? "tk-chip tk-chip--active" : "tk-chip"}
-                      onClick={() => setForm((f) => ({ ...f, session_id: sid }))}
-                    >
-                      {form.session_id === sid ? "Selected ✓" : "Select"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="tk-card">
-        <h2><Save size={17} style={{ verticalAlign: "-3px", marginRight: 7 }} />Step 4 · Reservation</h2>
+      <section className="tk-card tk-booking-card">
+        <div className="tk-step-heading"><span>01</span><div><p className="tk-eyebrow">METHODOLOGY</p><strong>in_person</strong></div></div>
+        <div className="tk-field"><label htmlFor="occupation">Occupation <b>*</b></label><select id="occupation" value={categoryId} onChange={(event) => selectCategory(event.target.value)} disabled={loading}><option value="">Select Occupation</option>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
+        {selectedCategory && <p className="tk-selection-note">Selected occupation: <strong>{selectedCategory.name}</strong></p>}
         <div className="tk-grid tk-grid-2">
-          <div className="tk-field">
-            <label>Session ID</label>
-            <input
-              value={form.session_id}
-              onChange={(e) => setForm((f) => ({ ...f, session_id: e.target.value }))}
-              placeholder="Select from the list above or paste an ID"
-            />
-          </div>
-          <div className="tk-field">
-            <label>Passport number *</label>
-            <input
-              value={form.passport_number}
-              onChange={(e) => setForm((f) => ({ ...f, passport_number: e.target.value.toUpperCase() }))}
-              placeholder="e.g. A01234567"
-            />
-          </div>
-          <div className="tk-field">
-            <label>Nationality</label>
-            <select value={form.nationality} onChange={(e) => setForm((f) => ({ ...f, nationality: e.target.value }))}>
-              <option value="BGD">Bangladesh (BGD)</option>
-              <option value="IND">India (IND)</option>
-              <option value="PAK">Pakistan (PAK)</option>
-              <option value="NPL">Nepal (NPL)</option>
-              <option value="PHL">Philippines (PHL)</option>
-            </select>
-          </div>
-          <div className="tk-field">
-            <label>Full name (optional)</label>
-            <input
-              value={form.full_name}
-              onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-              placeholder="Applicant name"
-            />
-          </div>
+          <div className="tk-field"><label htmlFor="city">City <b>*</b></label><select id="city" value={city} onChange={(event) => selectCity(event.target.value)} disabled={!categoryId || loading}><option value="">Select City</option>{availableCities.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+          <div className="tk-field"><label htmlFor="exam-date">Available Date <b>*</b></label><select id="exam-date" value={date} onChange={(event) => selectDate(event.target.value)} disabled={!city || loading}><option value="">Select Date</option>{availableDates.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
         </div>
-        <button type="button" className="tk-btn tk-btn--gold" onClick={submitReservation} disabled={busy}>
-          {busy ? <span className="tk-spinner" style={{ width: 14, height: 14 }} /> : <Save size={16} />}
-          {busy ? "Reserving…" : "Create reservation"}
-        </button>
-        {baseUrl && (
-          <p className="tk-muted" style={{ fontSize: "0.78rem", marginTop: 14 }}>
-            Backend: <code>{baseUrl}</code>
-          </p>
-        )}
-      </div>
+
+        <div className="tk-field"><label htmlFor="test-centre"><MapPin size={14} /> Live SVP Test Centre <b>*</b></label><select id="test-centre" value={centerId} onChange={(event) => { setCenterId(event.target.value); setSelectedSessionId(""); }} disabled={!date || searching || !centers.length}><option value="">{searching ? "Loading available centres..." : "Select Test Centre"}</option>{centers.map((item) => <option key={centerKey(item)} value={centerKey(item)}>{centerName(item)}{item.city ? ` — ${item.city}` : ""}</option>)}</select><p className="tk-help">Only test centres with an available session on the selected date are shown.</p></div>
+
+        {selectedCenter && <p className="tk-live-centre">Live centre: <strong>{centerName(selectedCenter)}</strong>{selectedCenter.id ? ` · ID ${selectedCenter.id}` : ""}{selectedCenter.city ? ` · ${selectedCenter.city}` : ""}</p>}
+
+        <div className="tk-field"><label htmlFor="available-session"><Clock3 size={14} /> Available Sessions at the Selected Centre <b>*</b></label><select id="available-session" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)} disabled={!centerId || searching || !centerSessions.length}><option value="">{searching ? "Loading sessions..." : "Select Available Session"}</option>{centerSessions.map((item, index) => { const id = String(item.id ?? item.session_id ?? item.sessionId ?? index); return <option key={id} value={id}>{sessionLabel(item)}{item.status ? ` — ${item.status}` : ""}</option>; })}</select><p className="tk-help"><Users size={14} /> {centerSessions.length ? `${centerSessions.length} available session${centerSessions.length === 1 ? "" : "s"}` : "Choose a centre to load available sessions."}</p></div>
+
+        <div className="tk-field"><label htmlFor="language">Language <b>*</b></label><select id="language" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">Select Language</option>{LANGUAGES.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}</select></div>
+      </section>
+
+      <section className="tk-card tk-booking-card tk-reservation-card">
+        <div className="tk-step-heading"><span>02</span><div><p className="tk-eyebrow">SECURE BOOKING</p><strong>Candidate details</strong></div></div>
+        <div className="tk-grid tk-grid-2"><div className="tk-field"><label htmlFor="passport">Passport number <b>*</b></label><input id="passport" value={passportNumber} onChange={(event) => setPassportNumber(event.target.value.toUpperCase())} placeholder="Enter passport number" /></div><div className="tk-field"><label>Selected session</label><input value={selectedSessionId || "No session selected"} readOnly /></div></div>
+        <button type="button" className="tk-btn tk-btn--gold" onClick={submitReservation} disabled={busy || !selectedSessionId}><Save size={16} /> {busy ? "Reserving..." : "Continue to booking"}</button>
+      </section>
     </div>
   );
 }
-
