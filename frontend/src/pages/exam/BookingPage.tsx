@@ -89,6 +89,21 @@ export default function BookingPage() {
     }) : occupations,
     [occupations, occupationSearch]
   );
+
+  const categoryLanguageCodes = useMemo(() => {
+    if (!selectedOccupation) return [];
+    const catId = String(selectedOccupation.categoryId || selectedOccupation.id || "");
+    if (!catId) return [];
+    const map = new Map<string, string>();
+    occupations.forEach((occ) => {
+      if (String(occ.id || occ.raw?.id || "") !== catId) return;
+      (occ.languageCodes || []).forEach((lc: any) => {
+        if (lc.code && !map.has(lc.code)) map.set(lc.code, lc.englishName || lc.code);
+      });
+    });
+    return Array.from(map.entries()).map(([code, name]) => ({ code, name }));
+  }, [occupations, selectedOccupation]);
+
   const cityOptions = useMemo(
     () => liveCityOptions.length ? liveCityOptions : buildCityOptions(availableDateEntries),
     [liveCityOptions, availableDateEntries]
@@ -570,7 +585,7 @@ export default function BookingPage() {
   useEffect(() => {
     if (!selectedOccupation) return;
     setCategoryId(String(selectedOccupation.categoryId || ""));
-    setLanguageCode(String(selectedOccupation.languageCodes[0]?.code || ""));
+    setLanguageCode("");
     setMethodology(String(selectedOccupation.methodology || "in_person"));
     setSelectedCity(""); setAvailableDate(""); setAvailableDateEntries([]); setLiveCityOptions([]); setSessions([]);
     setCityCenterOptions([]); setDateScopedCenters(null); setLoadingCenterAvailability(false);
@@ -1659,8 +1674,8 @@ export default function BookingPage() {
               <span className="bk-field-label">Language <b>*</b></span>
               <select value={languageCode} onChange={(e) => setLanguageCode(e.target.value)}>
                 <option value="">Select language</option>
-                {selectedOccupation?.languageCodes.map((item: any, idx: number) => (
-                  <option key={`${item.code}-${idx}`} value={item.code}>{item.englishName}</option>
+                {categoryLanguageCodes.map((item) => (
+                  <option key={item.code} value={item.code}>{item.name}</option>
                 ))}
               </select>
             </div>
