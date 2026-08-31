@@ -65,14 +65,14 @@ const App = () => (
               <Route path="/auth/register" element={<RegisterPage />} />
               <Route path="/user" element={<Navigate to="/auth/login" replace />} />
               <Route path="/dashboard" element={<AccessProtectedRoute allowedRoles={["USER"]}><DashboardPage /></AccessProtectedRoute>} />
-              <Route path="/exam/booking" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="booking.create"><BookingPage /></AccessProtectedRoute>} />
-              <Route path="/exam/payment" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><PaymentPage /></AccessProtectedRoute>} />
-              <Route path="/exam/payment/result" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><PaymentResultPage /></AccessProtectedRoute>} />
-              <Route path="/exam/reservations" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ReservationsPage /></AccessProtectedRoute>} />
-              <Route path="/exam/sessions" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ExamSessionListPage /></AccessProtectedRoute>} />
-              <Route path="/exam/sessions/:id" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ExamSessionDetailPage /></AccessProtectedRoute>} />
-              <Route path="/wallet" element={<AccessProtectedRoute allowedRoles={["USER"]}><WalletPage /></AccessProtectedRoute>} />
-              <Route path="/exam/test-centers/:id" element={<AccessProtectedRoute><TestCenterDetailPage /></AccessProtectedRoute>} />
+              <Route path="/exam/booking" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="booking.create"><ProtectedRoute><BookingPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/payment" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/payment/result" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentResultPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/reservations" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ReservationsPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/sessions" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ExamSessionListPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/sessions/:id" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ExamSessionDetailPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/wallet" element={<AccessProtectedRoute allowedRoles={["USER"]}><ProtectedRoute><WalletPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/test-centers/:id" element={<ProtectedRoute><TestCenterDetailPage /></ProtectedRoute>} />
 
               {/* Access Control System */}
               <Route path="/access/login" element={<AccessLoginPage />} />
