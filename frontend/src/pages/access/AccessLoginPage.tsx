@@ -28,7 +28,7 @@ export default function AccessLoginPage() {
     setMsg("");
     try {
       const user = await login(email, password);
-      if (user.role === "ADMIN" || user.role === "AGENCY") {
+      if (user.role === "ADMIN") {
         setMsg("Login successful. Redirecting to dashboard…");
         setMsgType("ok");
         navigate("/access/dashboard");
@@ -36,9 +36,9 @@ export default function AccessLoginPage() {
       }
 
       sessionStorage.setItem("portal_login", email);
-      setMsg("Login successful. Redirecting to dashboard…");
+      setMsg("Login successful. Redirecting to SVP verification…");
       setMsgType("ok");
-      navigate("/dashboard");
+      navigate("/auth/login");
     } catch (error: unknown) {
       const value = error as { message?: string; data?: { message?: unknown } };
       const detail = value.data?.message || value.message || "Login failed";
