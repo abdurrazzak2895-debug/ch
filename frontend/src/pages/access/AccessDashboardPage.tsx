@@ -94,7 +94,7 @@ export default function AccessDashboardPage() {
   function handleLogout() { logout(); navigate("/access/login"); }
 
   return (
-    <div className="ap-shell">
+    <div className={isAdmin ? "ap-shell ap-admin-dashboard" : "ap-shell"}>
       <aside className="ap-sidebar">
         <div className="ap-brand">
           <span className="ap-brand__mark">A</span>
@@ -140,8 +140,8 @@ export default function AccessDashboardPage() {
           <span className="ap-hero__ring ap-hero__ring--one" />
           <span className="ap-hero__ring ap-hero__ring--two" />
           <div className="ap-eyebrow"><ShieldCheck />{isAdmin ? "SYSTEM ADMINISTRATOR" : "AGENCY WORKSPACE"}</div>
-          <h1>{isAdmin ? "Control every account, agency and exam centre from one command centre." : "Manage your team of exam-booking users with confidence."}</h1>
-          <p>{isAdmin ? "Provision agencies, create users, configure session centres and adjust section rules." : "Create users, monitor account health and keep your agency team ready."}</p>
+          <h1>{isAdmin ? "Admin command centre for accounts, agencies and live operations." : "Manage your team of exam-booking users with confidence."}</h1>
+          <p>{isAdmin ? "Monitor the portal at a glance, then jump directly into account, agency, finance and infrastructure controls." : "Create users, monitor account health and keep your agency team ready."}</p>
           <div className="ap-hero__actions">
             {isAdmin ? (
               <>

@@ -1,1 +1,71 @@
 .ap-agency-overview,.ap-payment-activity{margin-top:22px}.ap-live-note,.ap-sync-warning{color:#9ba5ca;font-size:10px}.ap-sync-warning{color:#ff9cac}.ap-agency-list{display:grid;gap:12px;margin-top:16px}.ap-agency-card{overflow:hidden;border:1px solid #29335a;border-radius:12px;background:#0c1229}.ap-agency-card summary{display:grid;grid-template-columns:minmax(210px,1fr) repeat(4,minmax(72px,auto));gap:14px;align-items:center;padding:16px;cursor:pointer;list-style:none}.ap-agency-card summary::-webkit-details-marker{display:none}.ap-agency-card summary>div{display:flex;flex-direction:column}.ap-agency-card summary small,.ap-agency-user small{margin-top:4px;color:#9199b8;font-size:10px}.ap-agency-card summary>span{color:#929bbd;font-size:10px}.ap-agency-card summary b{display:block;color:#eef0ff;font-size:17px}.ap-agency-users{padding:0 16px 12px;border-top:1px solid #252e50}.ap-agency-user{display:grid;grid-template-columns:minmax(170px,1.3fr) 110px repeat(3,80px) 90px;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #202846;font-size:11px}.ap-agency-user>span:first-child{display:flex;flex-direction:column}.ap-agency-user time{color:#aab1ca}.ap-agency-user--head{color:#737d9f;font-size:9px;letter-spacing:.08em;text-transform:uppercase}.ap-payment-table{overflow-x:auto}.ap-payment-row{display:grid;grid-template-columns:minmax(170px,1.3fr) minmax(120px,1fr) 90px 110px 105px 110px;gap:12px;align-items:center;min-width:780px;padding:13px 0;border-bottom:1px solid #202846;font-size:11px}.ap-payment-row>span:first-child{display:flex;flex-direction:column}.ap-payment-row small{margin-top:4px;color:#9199b8}.ap-payment-row time{color:#aab1ca}.ap-payment-row--head{color:#737d9f;font-size:9px;letter-spacing:.08em;text-transform:uppercase}@media(max-width:900px){.ap-agency-card summary{grid-template-columns:1fr 1fr 1fr}.ap-agency-card summary>div{grid-column:1/-1}.ap-agency-user{grid-template-columns:minmax(150px,1fr) repeat(3,65px) 85px}.ap-agency-user>time,.ap-agency-user--head>span:nth-child(2){display:none}}
+
+/* ── Admin Command Center refresh ─────────────────────────────────── */
+.ap-admin-dashboard {
+  --admin-ink: #17213d;
+  --admin-navy: #111a35;
+  --admin-blue: #4964f4;
+  --admin-cyan: #14b8a6;
+  --admin-line: #e4e8f2;
+  background: #f4f7fb;
+}
+.ap-admin-dashboard .ap-sidebar {
+  width: 248px;
+  flex-basis: 248px;
+  padding: 22px 14px;
+  background: linear-gradient(180deg, #111a35 0%, #0d142a 100%);
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.ap-admin-dashboard .ap-brand { padding: 0 10px 22px; border-bottom-color: rgba(255,255,255,.1); }
+.ap-admin-dashboard .ap-brand__mark { width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(135deg, #6d7cff, #16b8a4); box-shadow: 0 8px 20px rgba(20,184,166,.2); }
+.ap-admin-dashboard .ap-brand strong { font-size: 16px; }
+.ap-admin-dashboard .ap-brand small { color: #7f8aad; }
+.ap-admin-dashboard .ap-nav { padding-top: 24px; gap: 5px; }
+.ap-admin-dashboard .ap-nav > small { margin: 16px 10px 7px; color: #657194; }
+.ap-admin-dashboard .ap-nav__link { min-height: 42px; padding: 10px 12px; border: 1px solid transparent; color: #aab4d0; }
+.ap-admin-dashboard .ap-nav__link svg { width: 17px; height: 17px; color: #8290b4; }
+.ap-admin-dashboard .ap-nav__link:hover { background: rgba(255,255,255,.07); color: #fff; border-color: rgba(255,255,255,.07); }
+.ap-admin-dashboard .ap-nav__link--active { background: linear-gradient(100deg, #5267f5, #3d55dc); border-color: rgba(161,174,255,.28); box-shadow: 0 10px 24px rgba(61,85,220,.25); }
+.ap-admin-dashboard .ap-sidebar__foot { border-top-color: rgba(255,255,255,.1); color: #657194; }
+.ap-admin-dashboard .ap-main { padding: 28px 36px 56px; }
+.ap-admin-dashboard .ap-topbar { margin-bottom: 22px; padding: 16px 20px; border: 0; border-radius: 16px; box-shadow: 0 8px 24px rgba(23,33,61,.06); }
+.ap-admin-dashboard .ap-topbar > div:first-child { gap: 4px; }
+.ap-admin-dashboard .ap-topbar small { color: #7581a2; font-weight: 800; letter-spacing: .12em; }
+.ap-admin-dashboard .ap-topbar strong { color: var(--admin-ink); font-size: 16px; }
+.ap-admin-dashboard .ap-account { gap: 12px; }
+.ap-admin-dashboard .ap-account button { padding: 8px 12px; border-radius: 9px; }
+.ap-admin-dashboard .ap-hero { margin-bottom: 22px; padding: 30px 34px; border-radius: 20px; background: radial-gradient(circle at 88% 10%, rgba(111,126,255,.55), transparent 32%), linear-gradient(120deg, #263a92 0%, #3d55dc 52%, #178f9c 125%); box-shadow: 0 18px 32px rgba(50,70,177,.2); }
+.ap-admin-dashboard .ap-hero h1 { max-width: 700px; font-size: 25px; letter-spacing: -.025em; }
+.ap-admin-dashboard .ap-hero p { max-width: 660px; color: rgba(255,255,255,.82); }
+.ap-admin-dashboard .ap-hero__actions { gap: 9px; }
+.ap-admin-dashboard .ap-btn { min-height: 38px; padding: 9px 14px; border-radius: 9px; }
+.ap-admin-dashboard .ap-btn--gold { background: #f0c869; border-color: #f0c869; color: #1d2748; }
+.ap-admin-dashboard .ap-stats { grid-template-columns: repeat(6, minmax(130px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.ap-admin-dashboard .ap-stat { min-height: 126px; padding: 17px; border: 0; border-radius: 15px; box-shadow: 0 8px 22px rgba(23,33,61,.055); }
+.ap-admin-dashboard .ap-stat small { color: #7c86a4; font-size: 10px; }
+.ap-admin-dashboard .ap-stat strong { font-size: 30px; color: var(--admin-ink); }
+.ap-admin-dashboard .ap-stat span { color: #8b94ae; line-height: 1.35; }
+.ap-admin-dashboard .ap-infra { grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 22px; }
+.ap-admin-dashboard .ap-infra__card { min-height: 76px; padding: 16px 18px; border: 0; border-radius: 14px; box-shadow: 0 8px 20px rgba(23,33,61,.05); }
+.ap-admin-dashboard .ap-infra__card svg { width: 22px; height: 22px; padding: 8px; box-sizing: content-box; border-radius: 10px; background: #eef0ff; color: var(--admin-blue); }
+.ap-admin-dashboard .ap-infra__card:nth-child(2) svg { background: #e8fbf7; color: #0d9c8d; }
+.ap-admin-dashboard .ap-infra__card:nth-child(3) svg { background: #fff5dc; color: #d28c10; }
+.ap-admin-dashboard .ap-panel { margin-bottom: 18px; padding: 22px; border: 0; border-radius: 16px; box-shadow: 0 8px 22px rgba(23,33,61,.05); }
+.ap-admin-dashboard .ap-panel header { margin-bottom: 18px; }
+.ap-admin-dashboard .ap-panel header small { color: #7c86a4; font-weight: 800; letter-spacing: .12em; }
+.ap-admin-dashboard .ap-panel header h2 { color: var(--admin-ink); font-size: 18px; }
+.ap-admin-dashboard .ap-agency-card { border-color: var(--admin-line); background: #fbfcff; }
+.ap-admin-dashboard .ap-agency-card summary { background: #fbfcff; }
+.ap-admin-dashboard .ap-payment-activity { background: #111a35; color: #eef2ff; }
+.ap-admin-dashboard .ap-payment-activity header h2 { color: #fff; }
+.ap-admin-dashboard .ap-payment-activity .ap-payment-row--head { border-bottom-color: rgba(255,255,255,.12); color: #7f8aad; }
+.ap-admin-dashboard .ap-payment-activity .ap-payment-row { border-bottom-color: rgba(255,255,255,.08); }
+.ap-admin-dashboard .ap-payment-activity .ap-payment-row small,
+.ap-admin-dashboard .ap-payment-activity .ap-payment-row time { color: #98a4c5; }
+.ap-admin-dashboard .ap-grid { grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr); gap: 18px; }
+.ap-admin-dashboard .ap-quick { background: linear-gradient(145deg, #ffffff, #f7f9ff); }
+.ap-admin-dashboard .ap-quick > a { min-height: 44px; align-items: center; border-color: var(--admin-line); }
+.ap-admin-dashboard .ap-self { background: #eef0ff; }
+@media (max-width: 1200px) { .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1024px) { .ap-admin-dashboard .ap-main { padding: 22px 20px 40px; } .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 640px) { .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(2, 1fr); } .ap-admin-dashboard .ap-hero { padding: 24px 20px; } .ap-admin-dashboard .ap-hero h1 { font-size: 21px; } }
