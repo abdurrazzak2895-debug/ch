@@ -120,6 +120,17 @@ export interface NormalizedOccupation {
   languageCodes: { code: string; englishName: string }[];
 }
 
+export function formatLanguageCodeName(code: string): string {
+  if (!code) return "";
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}/.test(code)) return "Unknown Language";
+  const suffix = code.slice(-2).toUpperCase();
+  const prefix = code.slice(0, -2).toUpperCase();
+  if (suffix === "BB") return `Bangla (${prefix})`;
+  if (suffix === "BE") return `English (${prefix})`;
+  if (suffix === "AB") return `Arabic (${prefix})`;
+  return code;
+}
+
 export function normalizeOccupation(item: any): NormalizedOccupation {
   const id = item?.id || item?.occupation_id || item?.value || "";
   const langSource = item?.prometric_codes || item?.category?.prometric_codes || [];
@@ -128,7 +139,7 @@ export function normalizeOccupation(item: any): NormalizedOccupation {
     englishName: c?.english_name || c?.name || c?.code || "",
   }));
   if (!languageCodes.length && item?.language_code) {
-    languageCodes = [{ code: String(item.language_code), englishName: String(item.language_code) }];
+    languageCodes = [{ code: String(item.language_code), englishName: formatLanguageCodeName(String(item.language_code)) }];
   }
   return {
     raw: item,
