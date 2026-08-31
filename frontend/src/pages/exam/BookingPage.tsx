@@ -89,15 +89,6 @@ export default function BookingPage() {
     }) : occupations,
     [occupations, occupationSearch]
   );
-  const allLanguageCodes = useMemo(() => {
-    const map = new Map<string, string>();
-    occupations.forEach((occ) => {
-      (occ.languageCodes || []).forEach((lc: any) => {
-        if (lc.code && !map.has(lc.code)) map.set(lc.code, lc.englishName || lc.code);
-      });
-    });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([code, name]) => ({ code, name }));
-  }, [occupations]);
   const cityOptions = useMemo(
     () => liveCityOptions.length ? liveCityOptions : buildCityOptions(availableDateEntries),
     [liveCityOptions, availableDateEntries]
@@ -1668,8 +1659,8 @@ export default function BookingPage() {
               <span className="bk-field-label">Language <b>*</b></span>
               <select value={languageCode} onChange={(e) => setLanguageCode(e.target.value)}>
                 <option value="">Select language</option>
-                {allLanguageCodes.map((item) => (
-                  <option key={item.code} value={item.code}>{item.name} ({item.code})</option>
+                {selectedOccupation?.languageCodes.map((item: any, idx: number) => (
+                  <option key={`${item.code}-${idx}`} value={item.code}>{item.englishName}</option>
                 ))}
               </select>
             </div>
