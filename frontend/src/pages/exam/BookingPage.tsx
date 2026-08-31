@@ -570,7 +570,7 @@ export default function BookingPage() {
   useEffect(() => {
     if (!selectedOccupation) return;
     setCategoryId(String(selectedOccupation.categoryId || ""));
-    setLanguageCode((prev) => prev || String(selectedOccupation.languageCodes[0]?.code || ""));
+    setLanguageCode(String(selectedOccupation.languageCodes[0]?.code || ""));
     setMethodology(String(selectedOccupation.methodology || "in_person"));
     setSelectedCity(""); setAvailableDate(""); setAvailableDateEntries([]); setLiveCityOptions([]); setSessions([]);
     setCityCenterOptions([]); setDateScopedCenters(null); setLoadingCenterAvailability(false);
