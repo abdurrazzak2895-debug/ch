@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { apiAuth, apiAuthGet } from "@/lib/api";
@@ -24,12 +24,12 @@ export default function LoginPage() {
   const [tokenSubmitting, setTokenSubmitting] = useState(false);
 
   const [occQuery, setOccQuery] = useState("");
-  const [occResults, setOccResults] = useState<any[]>([]);
+  const [allOccupations, setAllOccupations] = useState<any[]>([]);
+  const [occupationsLoaded, setOccupationsLoaded] = useState(false);
   const [occLoading, setOccLoading] = useState(false);
+  const [occOpen, setOccOpen] = useState(false);
   const [occSelected, setOccSelected] = useState<{ occupation_key: string; name: string } | null>(null);
   const [occError, setOccError] = useState("");
-  const occTimer = useRef<ReturnType<typeof setTimeout>>();
-  const occAbort = useRef(false);
   const [passportNumber, setPassportNumber] = useState("");
   const [nationality, setNationality] = useState("BGD");
   const [verifyLoading, setVerifyLoading] = useState(false);
@@ -64,37 +64,51 @@ export default function LoginPage() {
     } catch { /* ignore */ }
   }, []);
 
-  const searchOccupations = useCallback(async (query: string) => {
-    if (occAbort.current) return;
-    occAbort.current = false;
+  // Load the complete occupation catalogue once. The live API returns 297 records
+  // when `name` is omitted, while short partial `name` filters can return no rows.
+  useEffect(() => {
+    let active = true;
     setOccLoading(true);
     setOccError("");
-    try {
-      const qs = encodeURIComponent(query.trim());
-      const data = await apiAuthGet<any>(`/registration/occupations?per_page=1000&name=${qs}`);
-      const list = Array.isArray(data) ? data : (data?.data ?? data?.occupations ?? []);
-      setOccResults(list);
-    } catch (err: any) {
-      if (!occAbort.current) setOccError(err?.message || "Failed to load occupations");
-    } finally {
-      if (!occAbort.current) setOccLoading(false);
-    }
+    apiAuthGet<any>("/registration/occupations?per_page=1000")
+      .then((data) => {
+        if (!active) return;
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.occupations)
+            ? data.occupations
+            : Array.isArray(data?.data)
+              ? data.data
+              : Array.isArray(data?.data?.occupations)
+                ? data.data.occupations
+                : Array.isArray(data?.items)
+                  ? data.items
+                  : [];
+        setAllOccupations(list);
+        setOccupationsLoaded(true);
+      })
+      .catch((err: any) => {
+        if (active) setOccError(err?.message || "Failed to load occupations");
+      })
+      .finally(() => {
+        if (active) setOccLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
-  useEffect(() => {
-    if (occTimer.current) clearTimeout(occTimer.current);
-    const q = occQuery.trim();
-    if (q.length < 2) { setOccResults([]); setOccError(""); return; }
-    occTimer.current = setTimeout(() => searchOccupations(q), 350);
-    return () => { if (occTimer.current) clearTimeout(occTimer.current); };
-  }, [occQuery, searchOccupations]);
+  const occupationQuery = occQuery.trim().toLowerCase();
+  const visibleOccupations = allOccupations.filter((occ) => {
+    const name = String(occ.name || occ.english_name || occ.label || "").toLowerCase();
+    const key = String(occ.occupation_key || occ.occupationKey || occ.id || "").toLowerCase();
+    return !occupationQuery || name.includes(occupationQuery) || key.includes(occupationQuery);
+  }).slice(0, 20);
 
   function handleOccSelect(occ: any) {
     const key = String(occ.occupation_key || occ.occupationKey || occ.id || "");
     const name = String(occ.name || occ.english_name || occ.label || key);
     setOccSelected({ occupation_key: key, name });
     sessionStorage.setItem("selected_occupation", JSON.stringify({ occupation_key: key, name }));
-    setOccResults([]);
+    setOccOpen(false);
     setOccQuery("");
   }
 
@@ -330,10 +344,10 @@ export default function LoginPage() {
           <form className="ap-verify-form" onSubmit={verifyApplicant}>
             <label>Passport No. <b>*</b><input value={passportNumber} onChange={(e) => setPassportNumber(e.target.value.toUpperCase())} placeholder="Passport number" autoComplete="off" required /></label>
             <label>Nationality <b>*</b><select value={nationality} onChange={(e) => setNationality(e.target.value)}><option value="BGD">Bangladesh (BGD)</option><option value="IND">India (IND)</option><option value="PAK">Pakistan (PAK)</option><option value="NPL">Nepal (NPL)</option><option value="PHL">Philippines (PHL)</option></select></label>
-            <label>Occupation <b>*</b><div className="ap-occ-input-wrap"><input id="occ-search" type="text" value={occQuery} onChange={(e) => setOccQuery(e.target.value)} placeholder={occSelected ? occSelected.name : "Search occupation name"} autoComplete="off" required={!occSelected} />{occLoading && <span className="ap-occ-spinner">⌛</span>}{occSelected && !occQuery && <button type="button" className="ap-occ-clear" aria-label="Clear selected occupation" onClick={() => { setOccSelected(null); sessionStorage.removeItem("selected_occupation"); }}>×</button>}</div></label>
-            {occError && <div className="ap-message ap-message--error">{occError}</div>}
-            {occSelected && <div className="ap-occ-badge"><strong>{occSelected.name}</strong><code>{occSelected.occupation_key}</code></div>}
-            {occResults.length > 0 && <ul className="ap-occ-list">{occResults.slice(0, 20).map((occ, i) => { const key = String(occ.occupation_key || occ.occupationKey || occ.id || ""); const name = String(occ.name || occ.english_name || occ.label || key); return <li key={`${key}-${i}`} className="ap-occ-item" onClick={() => handleOccSelect(occ)}><span className="ap-occ-name">{name}</span><code className="ap-occ-key">{key}</code></li>; })}</ul>}
+              <label>Occupation <b>*</b><div className="ap-occ-input-wrap"><input id="occ-search" type="text" value={occQuery} onFocus={() => setOccOpen(true)} onChange={(e) => { setOccQuery(e.target.value); setOccSelected(null); setOccOpen(true); }} placeholder={occSelected ? occSelected.name : "Search occupation name"} autoComplete="off" required={!occSelected} />{occLoading && <span className="ap-occ-spinner">⌛</span>}{occSelected && !occQuery && <button type="button" className="ap-occ-clear" aria-label="Clear selected occupation" onClick={() => { setOccSelected(null); sessionStorage.removeItem("selected_occupation"); setOccOpen(true); }}>×</button>}</div></label>
+              {occError && <div className="ap-message ap-message--error">{occError}</div>}
+              {occSelected && <div className="ap-occ-badge"><strong>{occSelected.name}</strong><code>{occSelected.occupation_key}</code></div>}
+              {occOpen && occupationsLoaded && <ul className="ap-occ-list">{visibleOccupations.length > 0 ? visibleOccupations.map((occ, i) => { const key = String(occ.occupation_key || occ.occupationKey || occ.id || ""); const name = String(occ.name || occ.english_name || occ.label || key); return <li key={`${key}-${i}`} className="ap-occ-item" onClick={() => handleOccSelect(occ)}><span className="ap-occ-name">{name}</span><code className="ap-occ-key">{key}</code></li>; }) : <li className="ap-occ-item ap-occ-item--empty">No occupations found.</li>}</ul>}
             <button className="ap-verify-submit" type="submit" disabled={verifyLoading}>{verifyLoading ? "Verifying…" : "Verify  →"}</button>
           </form>
           <section className="ap-result-box" aria-live="polite">
