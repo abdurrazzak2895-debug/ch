@@ -1359,11 +1359,15 @@ Deno.serve(async (req) => {
                 : [];
           const match = rows.find((r: any) => {
             const rSid = String(r?.exam_session_id || r?.exam_session?.id || "");
-            const st = String(r?.status || r?.state || "").toLowerCase();
-            return rSid === String(examSessionId) && (st.includes("hold") || st.includes("pending") || st === "");
+            return rSid === String(examSessionId);
           });
           if (match) return json(match);
-          throw { statusCode: 409, code: "CANDIDATE_LABOR_ID_EXISTS", message: "Session already held but no active reservation found" };
+          const pendingMatch = rows.find((r: any) => {
+            const st = String(r?.status || r?.state || "").toLowerCase();
+            return st.includes("hold") || st.includes("pending") || st.includes("reserved") || st === "";
+          });
+          if (pendingMatch) return json(pendingMatch);
+          throw { statusCode: 409, code: "CANDIDATE_LABOR_ID_EXISTS", message: "Session already held but no active reservation found. Try a different session or contact support." };
         }
         throw holdErr;
       }

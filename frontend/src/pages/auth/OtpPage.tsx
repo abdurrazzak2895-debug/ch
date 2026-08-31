@@ -4,7 +4,7 @@ import { ArrowLeft, LockKeyhole, Mail, RefreshCw, ShieldCheck, Smartphone } from
 import { apiAuth } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { clearPendingAuth, getPendingAuth, setPendingAuth } from "@/lib/pending-auth";
-import "@/styles/auth-premium.css";
+import "@/styles/otp-page.css";
 
 type MessageType = "info" | "ok" | "error";
 type AuthError = {
@@ -46,7 +46,6 @@ export default function OtpPage() {
     if (otpInvalidMessage) {
       return `${otpInvalidMessage} Please resend and use only the newest code.`;
     }
-
     return error?.data?.message || error?.message || "OTP verification failed";
   }
 
@@ -60,7 +59,7 @@ export default function OtpPage() {
     }
 
     setVerifying(true);
-    setMsg("Checking your verification code…");
+    setMsg("Checking your verification code\u2026");
     setMsgType("info");
 
     try {
@@ -72,7 +71,7 @@ export default function OtpPage() {
       });
       authLogin(res.accessToken, res.user || res);
       clearPendingAuth();
-      setMsg("Verified. Taking you to your dashboard…");
+      setMsg("Verified. Taking you to your dashboard\u2026");
       setMsgType("ok");
       navigate("/dashboard");
     } catch (err: unknown) {
@@ -91,7 +90,7 @@ export default function OtpPage() {
     }
 
     setResending(true);
-    setMsg("Sending a fresh verification code…");
+    setMsg("Sending a fresh verification code\u2026");
     setMsgType("info");
 
     try {
@@ -115,112 +114,85 @@ export default function OtpPage() {
   const sessionReady = Boolean(login && password);
 
   return (
-    <main className="ap-shell ap-otp-shell">
-      <aside className="ap-brand-panel ap-otp-brand">
-        <div className="ap-brand-head">
-          <div className="ap-brand-mark">S</div>
-          <div className="ap-brand-title">
-            <strong>SVP Accreditation</strong>
-            <span>Labor exam portal</span>
+    <div className="otp-bg">
+      <div className="otp-orb otp-orb--1" />
+      <div className="otp-orb otp-orb--2" />
+
+      <Link className="otp-back" to="/auth/login">
+        <ArrowLeft size={16} /> Back to sign in
+      </Link>
+
+      <div className="otp-card">
+        <div className="otp-icon-ring">
+          <div className="otp-icon-circle">
+            <ShieldCheck size={32} />
           </div>
         </div>
 
-        <div className="ap-brand-copy">
-          <span className="ap-brand-eyebrow">Secure verification</span>
-          <h2>One quick step to <em>protect your account</em></h2>
-          <p>Your one-time code confirms it is really you before we open your accreditation workspace.</p>
+        <h1 className="otp-title">Verify your identity</h1>
+        <p className="otp-subtitle">
+          Enter the 6-digit code sent to your {deliveryLabel.toLowerCase()}
+        </p>
 
-          <div className="ap-otp-steps" aria-label="Sign-in progress">
-            <div className="ap-otp-step is-complete">
-              <span><ShieldCheck size={18} /></span>
-              <div><strong>Credentials accepted</strong><small>Your account details were confirmed</small></div>
-            </div>
-            <div className="ap-otp-step is-current">
-              <span><LockKeyhole size={18} /></span>
-              <div><strong>Verify one-time code</strong><small>Enter the newest code you received</small></div>
-            </div>
-            <div className="ap-otp-step">
-              <span>3</span>
-              <div><strong>Open dashboard</strong><small>Continue to bookings and payments</small></div>
-            </div>
+        <div className="otp-account-bar">
+          <div className="otp-account-info">
+            <span className="otp-label-tiny">Account</span>
+            <strong>{login || "No account"}</strong>
           </div>
+          <span className="otp-method-badge">
+            <DeliveryIcon size={13} /> {deliveryLabel}
+          </span>
         </div>
 
-        <div className="ap-brand-foot">
-          <span>© {new Date().getFullYear()} Accreditation Suite</span>
-          <span>Official SVP flow</span>
-        </div>
-      </aside>
-
-      <section className="ap-form-panel">
-        <div className="ap-form-card ap-otp-card">
-          <Link className="ap-otp-back" to="/auth/login">
-            <ArrowLeft size={16} /> Back to sign in
-          </Link>
-
-          <div className="ap-otp-icon" aria-hidden="true">
-            <DeliveryIcon size={26} />
+        <form className="otp-form" onSubmit={verify}>
+          <div className="otp-field">
+            <label htmlFor="otp-code">Verification code</label>
+            <input
+              ref={otpInputRef}
+              id="otp-code"
+              value={otpAttempt}
+              onChange={(e) => setOtpAttempt(e.target.value.replace(/\s/g, ""))}
+              placeholder="\u2022\u2022\u2022\u2022\u2022\u2022"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={10}
+              required
+            />
+            <small>Codes expire quickly. Use the newest code only.</small>
           </div>
 
-          <div className="ap-form-header ap-otp-header">
-            <h1>Check your {deliveryLabel.toLowerCase()}</h1>
-            <p>Enter the one-time verification code sent to your selected {deliveryLabel.toLowerCase()} contact.</p>
-          </div>
+          <button type="submit" className="otp-btn-primary" disabled={verifying || resending || !otpAttempt.trim()}>
+            {verifying ? (
+              <span className="otp-spinner" />
+            ) : (
+              <LockKeyhole size={16} />
+            )}
+            {verifying ? "Verifying\u2026" : "Verify & Continue"}
+          </button>
+        </form>
 
-          <div className="ap-otp-account">
-            <div>
-              <span>Account</span>
-              <strong>{login || "No account found"}</strong>
-            </div>
-            <span className="ap-otp-method"><DeliveryIcon size={14} /> {deliveryLabel}</span>
-          </div>
+        <button
+          type="button"
+          className="otp-resend-btn"
+          onClick={resendOtp}
+          disabled={verifying || resending || !sessionReady}
+        >
+          <RefreshCw size={14} className={resending ? "is-spinning" : ""} />
+          {resending ? "Sending\u2026" : "Resend code"}
+        </button>
 
-          <form className="ap-form" onSubmit={verify}>
-            <div className="ap-field ap-otp-field">
-              <label htmlFor="otp-code">Verification code</label>
-              <input
-                ref={otpInputRef}
-                id="otp-code"
-                value={otpAttempt}
-                onChange={(e) => setOtpAttempt(e.target.value.replace(/\s/g, ""))}
-                placeholder="Enter your code"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={10}
-                required
-                aria-describedby="otp-help"
-              />
-              <small id="otp-help">Codes expire quickly. If you requested more than one, use the newest code.</small>
-            </div>
+        {msg ? (
+          <div className={`otp-msg otp-msg--${msgType}`}>{msg}</div>
+        ) : null}
 
-            <button type="submit" className="ap-submit" disabled={verifying || resending || !otpAttempt.trim()}>
-              {verifying ? "Verifying…" : "Verify and continue"}
-            </button>
+        {!sessionReady ? (
+          <p className="otp-expired">
+            Session expired. <Link to="/auth/login">Request a new code</Link>.
+          </p>
+        ) : null}
+      </div>
 
-            <button
-              type="button"
-              className="ap-otp-resend"
-              onClick={resendOtp}
-              disabled={verifying || resending || !sessionReady}
-            >
-              <RefreshCw size={15} className={resending ? "is-spinning" : ""} />
-              {resending ? "Sending a new code…" : "Didn't receive it? Resend code"}
-            </button>
-
-            {msg ? (
-              <div role="status" className={`ap-message${msgType === "error" ? " ap-message--error" : msgType === "ok" ? " ap-message--ok" : ""}`}>
-                {msg}
-              </div>
-            ) : null}
-          </form>
-
-          {!sessionReady ? (
-            <p className="ap-hint ap-otp-expired">
-              This page needs an active sign-in session. <Link to="/auth/login">Request another code</Link>.
-            </p>
-          ) : null}
-        </div>
-      </section>
-    </main>
+      <p className="otp-footer">&copy; {new Date().getFullYear()} FlyDuronto.com &middot; SVP Accreditation</p>
+    </div>
   );
 }

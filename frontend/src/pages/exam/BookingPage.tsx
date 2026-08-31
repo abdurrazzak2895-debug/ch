@@ -1190,7 +1190,7 @@ export default function BookingPage() {
             const rid = String(r?.id || r?.reservation_id || "");
             const state = String(r?.status || r?.state || "").toLowerCase();
             const rSessionId = String(r?.exam_session_id || r?.exam_session?.id || "");
-            return rSessionId === String(selectedSessionId) && (state.includes("hold") || state.includes("pending") || state === "");
+            return rSessionId === String(selectedSessionId);
           });
           if (myHold) {
             const holdIdVal = String(myHold.id || myHold.hold_id || myHold.temporary_seat_id || "");
