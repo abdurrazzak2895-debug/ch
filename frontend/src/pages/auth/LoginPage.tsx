@@ -336,10 +336,39 @@ export default function LoginPage() {
             {occResults.length > 0 && <ul className="ap-occ-list">{occResults.slice(0, 20).map((occ, i) => { const key = String(occ.occupation_key || occ.occupationKey || occ.id || ""); const name = String(occ.name || occ.english_name || occ.label || key); return <li key={`${key}-${i}`} className="ap-occ-item" onClick={() => handleOccSelect(occ)}><span className="ap-occ-name">{name}</span><code className="ap-occ-key">{key}</code></li>; })}</ul>}
             <button className="ap-verify-submit" type="submit" disabled={verifyLoading}>{verifyLoading ? "Verifying…" : "Verify  →"}</button>
           </form>
-          <section className="ap-result-box" aria-live="polite"><h3>Verification Result</h3>{verifyError ? <p className="ap-result-error">{verifyError}</p> : !verifyResult ? <p className="ap-result-empty">Complete the form to view the live result.</p> : <><div className="ap-result-status">✓ <strong>{findValue(verifyResult, ["message", "status", "result"]) || "Result received"}</strong></div><dl><div><dt>Applicant Name</dt><dd>{findValue(verifyResult, ["full_name", "name", "applicant_name"]) || "—"}</dd></div><div><dt>Passport No.</dt><dd>{findValue(verifyResult, ["passport_number"]) || passportNumber}</dd></div><div><dt>Occupation</dt><dd>{occSelected?.name}</dd></div>
-            <div><dt>Exam Result</dt><dd className={(() => { const r = (findValue(verifyResult, ["exam_result", "final_result", "result_status"]) || "").toLowerCase(); return r === "passed" ? "ap-result-pass" : r === "failed" ? "ap-result-fail" : ""; })()}>{(() => { const r = findValue(verifyResult, ["exam_result", "final_result", "result_status"]); return r ? r.charAt(0).toUpperCase() + r.slice(1) : "—"; })()}</dd></div>
-            <div><dt>Test Center</dt><dd>{findValue(verifyResult, ["test_center_name", "center_name"]) || "—"}</dd></div>
-            <div><dt>Test Date</dt><dd>{findValue(verifyResult, ["test_date", "exam_date", "date"]) || "—"}</dd></div></dl></>}</section>
+          <section className="ap-result-box" aria-live="polite">
+            <div className="ap-result-heading">
+              <div>
+                <span className="ap-result-eyebrow">Verification result</span>
+                <h3>Applicant status</h3>
+              </div>
+              {verifyResult && <span className="ap-result-live"><span className="ap-result-live-dot" />Live response</span>}
+            </div>
+            {verifyError ? <p className="ap-result-error">{verifyError}</p> : !verifyResult ? (
+              <div className="ap-result-empty"><span className="ap-result-empty-icon">⌁</span><p>Complete the form to view the live result.</p></div>
+            ) : (() => {
+              const rawResult = findValue(verifyResult, ["exam_result", "final_result", "result_status"]);
+              const normalizedResult = rawResult.toLowerCase();
+              const resultLabel = rawResult ? rawResult.charAt(0).toUpperCase() + rawResult.slice(1) : "—";
+              const outcomeClass = normalizedResult === "passed" ? "is-passed" : normalizedResult === "failed" ? "is-failed" : "is-pending";
+              return (
+                <>
+                  <div className={`ap-result-outcome ${outcomeClass}`}>
+                    <span className="ap-result-outcome-icon">{normalizedResult === "passed" ? "✓" : "!"}</span>
+                    <div className="ap-result-outcome-copy"><span>Exam result</span><strong>{resultLabel}</strong><small>Result received successfully</small></div>
+                    <span className="ap-result-outcome-badge">{normalizedResult === "passed" ? "PASSED" : resultLabel.toUpperCase()}</span>
+                  </div>
+                  <dl className="ap-result-details">
+                    <div className="ap-result-detail ap-result-detail--primary"><dt>Applicant name</dt><dd>{findValue(verifyResult, ["full_name", "name", "applicant_name"]) || "—"}</dd></div>
+                    <div className="ap-result-detail"><dt>Passport no.</dt><dd>{findValue(verifyResult, ["passport_number"]) || passportNumber}</dd></div>
+                    <div className="ap-result-detail"><dt>Occupation</dt><dd>{occSelected?.name || "—"}</dd></div>
+                    <div className="ap-result-detail ap-result-detail--wide"><dt>Test center</dt><dd>{findValue(verifyResult, ["test_center_name", "center_name"]) || "—"}</dd></div>
+                    <div className="ap-result-detail"><dt>Test date</dt><dd>{findValue(verifyResult, ["test_date", "exam_date", "date"]) || "—"}</dd></div>
+                  </dl>
+                </>
+              );
+            })()}
+          </section>
         </div>
       </aside>
     </main>
