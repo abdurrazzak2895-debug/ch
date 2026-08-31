@@ -79,11 +79,14 @@ export default function BookingPage() {
   const occupationRef = useRef<HTMLDivElement>(null);
 
   const selectedOccupation = useMemo(
-    () => occupations.find((item) => String(item.id) === String(selectedOccupationId)) || null,
+    () => occupations.find((item) => String(item.raw?.occupation_id ?? item.id) === String(selectedOccupationId)) || null,
     [occupations, selectedOccupationId]
   );
   const filteredOccupations = useMemo(
-    () => occupationSearch ? occupations.filter((item) => item.name?.toLowerCase().includes(occupationSearch.toLowerCase())) : occupations,
+    () => occupationSearch ? occupations.filter((item) => {
+      const q = occupationSearch.toLowerCase();
+      return item.name?.toLowerCase().includes(q) || item.raw?.category_name?.toLowerCase().includes(q) || String(item.raw?.occupation_key || "").includes(q);
+    }) : occupations,
     [occupations, occupationSearch]
   );
   const cityOptions = useMemo(
@@ -539,7 +542,7 @@ export default function BookingPage() {
         const arr = pickArray(data);
         const seen = new Set<string>();
         const unique = arr.filter((it: any) => {
-          const k = String(it?.id ?? "");
+          const k = String(it?.occupation_id ?? it?.id ?? "");
           if (!k || seen.has(k)) return false;
           seen.add(k);
           return true;
@@ -1532,10 +1535,11 @@ export default function BookingPage() {
                       <div className="bk-popup-empty">No results found</div>
                     )}
                     {filteredOccupations.map((item) => (
-                      <button key={item.id} type="button"
-                        className={`bk-popup-item${String(item.id) === String(selectedOccupationId) ? " bk-popup-item--active" : ""}`}
-                        onClick={() => { setSelectedOccupationId(String(item.id)); setIsOccupationOpen(false); setOccupationSearch(""); }}>
-                        {item.name}
+                      <button key={item.raw?.occupation_id ?? item.id} type="button"
+                        className={`bk-popup-item${String(item.raw?.occupation_id ?? item.id) === String(selectedOccupationId) ? " bk-popup-item--active" : ""}`}
+                        onClick={() => { setSelectedOccupationId(String(item.raw?.occupation_id ?? item.id)); setIsOccupationOpen(false); setOccupationSearch(""); }}>
+                        <span>{item.name}</span>
+                        {item.raw?.category_name && <span style={{fontSize:"0.75em",opacity:0.6,marginLeft:6}}>{item.raw.category_name}</span>}
                       </button>
                     ))}
                   </div>

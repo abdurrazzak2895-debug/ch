@@ -123,16 +123,20 @@ export interface NormalizedOccupation {
 export function normalizeOccupation(item: any): NormalizedOccupation {
   const id = item?.id || item?.occupation_id || item?.value || "";
   const langSource = item?.prometric_codes || item?.category?.prometric_codes || [];
+  let languageCodes = pickArray(langSource).map((c: any) => ({
+    code: c?.code || c?.language_code || "",
+    englishName: c?.english_name || c?.name || c?.code || "",
+  }));
+  if (!languageCodes.length && item?.language_code) {
+    languageCodes = [{ code: String(item.language_code), englishName: String(item.language_code) }];
+  }
   return {
     raw: item,
     id: String(id),
     name: item?.name || item?.english_name || item?.occupation_name || item?.title || `Occupation #${id}`,
-    categoryId: String(item?.category_id || item?.category?.id || ""),
+    categoryId: String(item?.category_id || item?.category?.id || id || ""),
     methodology: item?.methodology_type || item?.methodology || "in_person",
-    languageCodes: pickArray(langSource).map((c: any) => ({
-      code: c?.code || c?.language_code || "",
-      englishName: c?.english_name || c?.name || c?.code || "",
-    })),
+    languageCodes,
   };
 }
 
