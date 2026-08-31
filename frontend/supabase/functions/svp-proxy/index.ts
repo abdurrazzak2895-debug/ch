@@ -1310,7 +1310,7 @@ Deno.serve(async (req) => {
           p_account_id: accountId,
           p_amount: refundAmount,
           p_direction: "credit",
-          p_transaction_type: "auto_refund",
+          p_transaction_type: "refund",
           p_idempotency_key: `refund:${rid}:${crypto.randomUUID()}`,
           p_description: `Auto-refund for finalized reservation #${rid} (status: ${status})`,
           p_created_by: accountId,
