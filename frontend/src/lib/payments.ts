@@ -60,6 +60,10 @@ export function classifyPaymentStatus(raw: string): PaymentStatusType {
   // substring "paid" and must not be classified as a successful payment.
   if (/pending|initiated|created|processing|unpaid|not_paid|payment_required|awaiting|in_progress/.test(s)) return "pending";
   if (/paid|success|successful|completed|confirmed|settled|captured/.test(s)) return "success";
+  // HyperPay / Network International result-code classification:
+  // 000.xxx (except 000.200.xxx which is pending) = paid.
+  if (/^000\.\d+\.\d+/.test(s) && !/^000\.200\./.test(s)) return "success";
+  if (/^000\.200\./.test(s)) return "pending";
   return "unknown";
 }
 
@@ -70,6 +74,15 @@ export function normalizePayment(
   const rawStatus = String(
     firstValue(payment, ["status", "state", "payment_status", "transaction_status", "result"]) || ""
   );
+  const resultCode = String(
+    firstValue(payment, [
+      "result.code", "response.result.code", "payment.result.code",
+      "payment_status.result.code", "status_code", "code",
+    ]) || ""
+  );
+  // PHP logic: if no explicit result code, infer from rawStatus if it looks like a code
+  const effectiveCode = (!resultCode && /^\d{3}\./.test(rawStatus)) ? rawStatus : resultCode;
+  const classifyKey = effectiveCode || rawStatus;
   const amount = firstValue(payment, ["amount", "total", "total_amount", "price", "amount_cents"]);
   return {
     paymentId: String(firstValue(payment, ["id", "payment_id", "transaction_id", "checkout_id", "reference"]) || "-"),
@@ -86,7 +99,7 @@ export function normalizePayment(
       firstValue(payment, ["occupation_name"]) ||
       "-"
     ),
-    status: classifyPaymentStatus(rawStatus),
+    status: classifyPaymentStatus(classifyKey),
     rawStatus: rawStatus || "unknown",
     amount: amount === "" ? "-" : String(amount),
     currency: String(firstValue(payment, ["currency", "currency_code"]) || "SAR"),
@@ -95,7 +108,8 @@ export function normalizePayment(
       firstValue(payment, ["created_at", "createdAt", "updated_at", "timestamp", "paid_at"]) || ""
     ),
     source: context.source || "payments-endpoint",
-  };
+    result_code: effectiveCode || null,
+  } as PaymentRecord;
 }
 
 function reservationOccupation(item: any): string {

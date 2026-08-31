@@ -43,6 +43,7 @@ import TakamolBookingPage from "@/pages/takamol/TakamolBookingPage";
 import TakamolReservationsPage from "@/pages/takamol/TakamolReservationsPage";
 import TakamolSessionsPage from "@/pages/takamol/TakamolSessionsPage";
 import TakamolResultsPage from "@/pages/takamol/TakamolResultsPage";
+import T2HubLivePage from "@/pages/takamol/T2HubLivePage";
 
 const queryClient = new QueryClient();
 
@@ -101,6 +102,9 @@ const App = () => (
                 <Route path="results" element={<TakamolResultsPage />} />
                 <Route path="search" element={<TakamolDashboardPage />} />
               </Route>
+
+              {/* Takamol Live Check — no auth required */}
+              <Route path="/takamol/live" element={<T2HubLivePage />} />
 
               <Route path="*" element={<NotFound />} />
             </Routes>

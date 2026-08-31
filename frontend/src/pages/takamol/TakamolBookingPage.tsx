@@ -79,12 +79,12 @@ export default function TakamolBookingPage() {
   }, [datesRes]);
   const selectedCenter = useMemo(() => centers.find((item) => centerKey(item) === centerId) || null, [centers, centerId]);
   const centerSessions = useMemo(() => {
-    if (!centerId) return sessions;
-    const matching = sessions.filter((item) => {
+    if (!centerId) return sessions.filter((s) => s.resolved === true);
+    return sessions.filter((item) => {
       const key = sessionCenterKey(item);
-      return !key || key === centerId || key.toLowerCase() === centerName(selectedCenter).toLowerCase();
+      const matchesCenter = key === centerId || key.toLowerCase() === centerName(selectedCenter).toLowerCase();
+      return matchesCenter && item.resolved === true;
     });
-    return matching.length ? matching : sessions;
   }, [centerId, selectedCenter, sessions]);
 
   const loadCategories = useCallback(async () => {
@@ -129,45 +129,64 @@ export default function TakamolBookingPage() {
     setCity(value);
     setDate("");
     setCenterId("");
-    setSessions([]);
     setSelectedSessionId("");
+    setSessions([]);
     setCenters([]);
+    setDatesRes(null);
     setError(null);
     if (!value || !categoryId) return;
     setLoading(true);
     try {
-      const response = await getDates({ category_id: Number(categoryId), city: value });
-      setDatesRes(response);
+      const body = { category_id: Number(categoryId), city: value };
+      const centerResponse = await getCenters(body);
+      const centerList = listFrom<TakamolCenter>(centerResponse, ["centers", "data"]);
+      setCenters(centerList);
     } catch (err: any) {
-      setError(err?.message || "Failed to load exam dates");
+      setError(err?.message || "Failed to load test centres");
     } finally {
       setLoading(false);
     }
   }, [categoryId]);
 
-  const selectDate = useCallback(async (value: string) => {
-    setDate(value);
-    setCenterId("");
+  const selectCenter = useCallback(async (value: string) => {
+    setCenterId(value);
     setSelectedSessionId("");
     setSessions([]);
-    setCenters([]);
+    setDatesRes(null);
+    setDate("");
     setError(null);
     if (!value || !categoryId || !city) return;
+    setLoading(true);
+    try {
+      const body = { category_id: Number(categoryId), city, test_center_id: value };
+      const response = await getDates(body);
+      setDatesRes(response);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load exam dates for this centre");
+    } finally {
+      setLoading(false);
+    }
+  }, [categoryId, city]);
+
+  const selectDate = useCallback(async (value: string) => {
+    setDate(value);
+    setSelectedSessionId("");
+    setSessions([]);
+    setError(null);
+    if (!value || !categoryId || !city || !centerId) return;
     setSearching(true);
     try {
-      const body = { category_id: Number(categoryId), city, exam_date: value };
-      const [centerResponse, sessionResponse] = await Promise.all([getCenters(body), getSessions(body)]);
-      const centerList = listFrom<TakamolCenter>(centerResponse, ["centers", "data"]);
+      const body = { category_id: Number(categoryId), city, exam_date: value, test_center_id: centerId };
+      const sessionResponse = await getSessions(body);
       const sessionList = listFrom<TakamolSession>(sessionResponse, ["sessions", "data"]);
-      setCenters(centerList);
-      setSessions(sessionList);
-      if (centerList.length === 1) setCenterId(centerKey(centerList[0]));
+      const verifiedSessions = sessionList.filter((s: any) => s.resolved === true);
+      setSessions(verifiedSessions);
     } catch (err: any) {
-      setError(err?.message || "Failed to load available centres and sessions");
+      setError(err?.message || "Failed to load sessions");
     } finally {
       setSearching(false);
     }
-  }, [categoryId, city]);
+  }, [categoryId, city, centerId]);
 
   const submitReservation = useCallback(async () => {
     if (!selectedSessionId || !passportNumber.trim()) {
@@ -220,16 +239,15 @@ export default function TakamolBookingPage() {
         <div className="tk-step-heading"><span>01</span><div><p className="tk-eyebrow">METHODOLOGY</p><strong>in_person</strong></div></div>
         <div className="tk-field"><label htmlFor="occupation">Occupation <b>*</b></label><select id="occupation" value={categoryId} onChange={(event) => selectCategory(event.target.value)} disabled={loading}><option value="">Select Occupation</option>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
         {selectedCategory && <p className="tk-selection-note">Selected occupation: <strong>{selectedCategory.name}</strong></p>}
-        <div className="tk-grid tk-grid-2">
-          <div className="tk-field"><label htmlFor="city">City <b>*</b></label><select id="city" value={city} onChange={(event) => selectCity(event.target.value)} disabled={!categoryId || loading}><option value="">Select City</option>{availableCities.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
-          <div className="tk-field"><label htmlFor="exam-date">Available Date <b>*</b></label><select id="exam-date" value={date} onChange={(event) => selectDate(event.target.value)} disabled={!city || loading}><option value="">Select Date</option>{availableDates.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
-        </div>
+        <div className="tk-field"><label htmlFor="city">City <b>*</b></label><select id="city" value={city} onChange={(event) => selectCity(event.target.value)} disabled={!categoryId || loading}><option value="">Select City</option>{availableCities.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
 
-        <div className="tk-field"><label htmlFor="test-centre"><MapPin size={14} /> Live SVP Test Centre <b>*</b></label><select id="test-centre" value={centerId} onChange={(event) => { setCenterId(event.target.value); setSelectedSessionId(""); }} disabled={!date || searching || !centers.length}><option value="">{searching ? "Loading available centres..." : "Select Test Centre"}</option>{centers.map((item) => <option key={centerKey(item)} value={centerKey(item)}>{centerName(item)}{item.city ? ` — ${item.city}` : ""}</option>)}</select><p className="tk-help">Only test centres with an available session on the selected date are shown.</p></div>
+        <div className="tk-field"><label htmlFor="test-centre"><MapPin size={14} /> Test Centre <b>*</b></label><select id="test-centre" value={centerId} onChange={(event) => selectCenter(event.target.value)} disabled={!city || loading || !centers.length}><option value="">{loading ? "Loading centres..." : "Select Test Centre"}</option>{centers.map((item) => <option key={centerKey(item)} value={centerKey(item)}>{centerName(item)}{item.city ? ` — ${item.city}` : ""}</option>)}</select></div>
 
-        {selectedCenter && <p className="tk-live-centre">Live centre: <strong>{centerName(selectedCenter)}</strong>{selectedCenter.id ? ` · ID ${selectedCenter.id}` : ""}{selectedCenter.city ? ` · ${selectedCenter.city}` : ""}</p>}
+        <div className="tk-field"><label htmlFor="exam-date">Available Date <b>*</b></label><select id="exam-date" value={date} onChange={(event) => selectDate(event.target.value)} disabled={!centerId || loading}><option value="">Select Date</option>{availableDates.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
 
-        <div className="tk-field"><label htmlFor="available-session"><Clock3 size={14} /> Available Sessions at the Selected Centre <b>*</b></label><select id="available-session" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)} disabled={!centerId || searching || !centerSessions.length}><option value="">{searching ? "Loading sessions..." : "Select Available Session"}</option>{centerSessions.map((item, index) => { const id = String(item.id ?? item.session_id ?? item.sessionId ?? index); return <option key={id} value={id}>{sessionLabel(item)}{item.status ? ` — ${item.status}` : ""}</option>; })}</select><p className="tk-help"><Users size={14} /> {centerSessions.length ? `${centerSessions.length} available session${centerSessions.length === 1 ? "" : "s"}` : "Choose a centre to load available sessions."}</p></div>
+        {selectedCenter && <p className="tk-live-centre">Selected centre: <strong>{centerName(selectedCenter)}</strong>{selectedCenter.id ? ` · ID ${selectedCenter.id}` : ""}{selectedCenter.city ? ` · ${selectedCenter.city}` : ""}</p>}
+
+        <div className="tk-field"><label htmlFor="available-session"><Clock3 size={14} /> Available Sessions <b>*</b></label><select id="available-session" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)} disabled={!date || searching || !centerSessions.length}><option value="">{searching ? "Loading sessions..." : "Select Session"}</option>{centerSessions.map((item, index) => { const id = String(item.id ?? item.session_id ?? item.sessionId ?? index); return <option key={id} value={id}>{sessionLabel(item)}{item.status ? ` — ${item.status}` : ""}{item.available_seats != null ? ` (${item.available_seats} seats)` : ""}</option>; })}</select><p className="tk-help"><Users size={14} /> {centerSessions.length ? `${centerSessions.length} verified session${centerSessions.length === 1 ? "" : "s"}` : "Select a date to load sessions."}</p></div>
 
         <div className="tk-field"><label htmlFor="language">Language <b>*</b></label><select id="language" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">Select Language</option>{LANGUAGES.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}</select></div>
       </section>

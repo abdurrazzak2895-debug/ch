@@ -114,6 +114,12 @@ credentials.json
 *.key
 .credentials
 
+# T2Hub captured session data (cookies, JS bundles, API responses)
+captured/
+
+# T2Hub credentials
+.env.t2hub
+
 # Supabase CLI local cache
 frontend/supabase/.temp/
 supabase/.temp/

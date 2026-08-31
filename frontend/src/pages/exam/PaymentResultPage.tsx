@@ -15,7 +15,7 @@ function getPaymentResult(searchParams: URLSearchParams) {
   const status = readParam(searchParams, ["status", "payment_status", "paymentStatus"]);
   const text = `${code} ${description} ${status}`.toLowerCase();
 
-  if (/^(000\.000\.|000\.100\.1|000\.300\.000)/.test(code) || /success|successful|paid|approved|completed/.test(text)) {
+  if (/^000\.(?!200\.)/.test(code) || /success|successful|paid|approved|completed/.test(text)) {
     return {
       type: "success",
       title: "Payment Successful",

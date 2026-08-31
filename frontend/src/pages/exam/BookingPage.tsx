@@ -30,6 +30,7 @@ export default function BookingPage() {
   const [availableDateEntries, setAvailableDateEntries] = useState<{ city: string; date: string }[]>([]);
   const [liveCityOptions, setLiveCityOptions] = useState<string[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [allDateSessions, setAllDateSessions] = useState<any[]>([]);
   const [testCenterMap, setTestCenterMap] = useState<Map<string, string>>(new Map());
   // name (lowercased) -> site_id, resolved from local DB so we can stamp site_id
   // on sessions when SVP returns site_id=null.
@@ -95,8 +96,8 @@ export default function BookingPage() {
     [sessions, selectedCity]
   );
   const sessionsWithResolvedCenters = useMemo(
-    () => cityFilteredSessions.map((item) => resolveSessionCenter(item, new Map(), new Map(), new Map(), [])),
-    [cityFilteredSessions]
+    () => cityFilteredSessions.map((item) => resolveSessionCenter(item, testCenterMap, centerNameToSiteId, sessionIdToSiteId, sectionRules)),
+    [cityFilteredSessions, testCenterMap, centerNameToSiteId, sessionIdToSiteId, sectionRules]
   );
   const centerOptions = useMemo(() => {
     const live = cityCenterOptions
@@ -534,20 +535,10 @@ export default function BookingPage() {
     (async () => {
       setLoadingOccupations(true); setError("");
       try {
-        const perPage = 200;
-        const all: any[] = [];
-        let page = 1;
-        // Fetch all pages until we get an empty/short page (max 50 pages safety)
-        for (; page <= 50; page++) {
-          const data = await api(`/occupations?locale=en&per_page=${perPage}&page=${page}`);
-          const arr = pickArray(data);
-          if (!arr.length) break;
-          all.push(...arr);
-          if (arr.length < perPage) break;
-        }
-        // Dedupe by id
+        const data = await api(`/t2hub/occupations?per_page=1000&locale=en`);
+        const arr = pickArray(data);
         const seen = new Set<string>();
-        const unique = all.filter((it) => {
+        const unique = arr.filter((it: any) => {
           const k = String(it?.id ?? "");
           if (!k || seen.has(k)) return false;
           seen.add(k);
@@ -604,17 +595,16 @@ export default function BookingPage() {
       setLoadingDates(true); setError("");
       try {
         const params = new URLSearchParams({
-          per_page: "1000", category_id: String(categoryId),
-          start_at_date_from: normalizeDateValue(new Date().toISOString()),
-          available_seats: "greater_than::0", status: "scheduled", locale: "en",
+          category_id: String(categoryId),
         });
-        const data = await api(`/available-dates?${params.toString()}`);
+        const data = await api(`/t2hub/exam-available-dates?${params.toString()}`);
         if (!active) return;
-        const entries = normalizeAvailableDateEntries(pickArray(data));
-        const cities = buildCityOptions(entries);
+        const rawDates = data?.available_dates || data?.dates || data?.data || (Array.isArray(data) ? data : []);
+        const entries = normalizeAvailableDateEntries(rawDates);
+        const cities = [...new Set(entries.map((e) => e.city).filter(Boolean))].sort();
         setLiveCityOptions(cities);
         setAvailableDateEntries(entries);
-        setSelectedCity((prev) => (prev && cities.includes(prev) ? prev : cities[0] || ""));
+        setSelectedCity((prev) => (prev && cities.includes(prev) ? prev : cities[0] || prev || ""));
       } catch (err: any) { if (!active) return; setAvailableDateEntries([]); setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load available dates")); }
       finally { if (active) setLoadingDates(false); }
     })();
@@ -691,13 +681,10 @@ export default function BookingPage() {
     (async () => {
       if (!selectedCity) { setCityCenterOptions([]); return; }
       try {
-        // The centre roster is city/country scoped, not occupation scoped.
-        // Category filtering belongs to the exam-session availability query;
-        // including category_id here incorrectly hides valid city centres.
-        const params = new URLSearchParams({ city: String(selectedCity), country_id: "78" });
-        const data: any = await api(`/test-centers?${params.toString()}`);
+        const params = new URLSearchParams({ city: String(selectedCity) });
+        const data: any = await api(`/t2hub/test-centers?${params.toString()}`);
         if (!active) return;
-        const rawCenters = Array.isArray(data?.test_centers) ? data.test_centers : pickArray(data);
+        const rawCenters = Array.isArray(data?.sites) ? data.sites : Array.isArray(data?.test_centers) ? data.test_centers : pickArray(data);
         const verifiedCenters = mergeVerifiedCityCenterRoster(rawCenters, selectedCity, "78");
         const normalized = verifiedCenters.map((center: any) => ({
           siteId: String(center.test_center_id ?? center.id ?? center.site_id ?? ""),
@@ -714,68 +701,61 @@ export default function BookingPage() {
     return () => { active = false; };
   }, [selectedCity]);
 
-  // The available-dates endpoint is city-level. Before the user chooses a
-  // centre, check every real centre for the selected date and retain only
-  // centres with a positive official SVP session count.
+  // When a date is selected, fetch ALL sessions for that date in one call.
+  // Centers are derived from the response — only centers with sessions appear.
   useEffect(() => {
     let active = true;
     (async () => {
       if (!selectedCity || !availableDate || !categoryId) {
         setDateScopedCenters(null);
         setLoadingCenterAvailability(false);
+        setSessions([]);
+        setAllDateSessions([]);
         return;
       }
       setLoadingCenterAvailability(true);
+      setSessions([]);
+      setError("");
       try {
-        // Use the official centre-scoped session route directly. The optimized
-        // `/center-session-availability` route is optional server-side code and
-        // may not be deployed with the frontend; a missing route must never be
-        // interpreted as zero availability. Each centre is therefore checked
-        // independently through the already-live `/exam-sessions` contract.
-        // Load the complete city centre roster first; occupation category is
-        // applied only when checking each centre's date-scoped sessions.
-        const centerPayload: any = await api(`/test-centers?${new URLSearchParams({
+        const data: any = await api(`/t2hub/pacc-exam-sessions?${new URLSearchParams({
+          category_id: String(categoryId),
           city: String(selectedCity),
-          country_id: "78",
+          exam_date: availableDate,
         }).toString()}`);
-        const centers = Array.isArray(centerPayload?.test_centers)
-          ? centerPayload.test_centers
-          : Array.isArray(centerPayload?.centers)
-            ? centerPayload.centers
-            : pickArray(centerPayload);
-        const verifiedCenters = mergeVerifiedCityCenterRoster(centers, selectedCity, "78");
-        const rawCenters: any[] = await Promise.all(verifiedCenters.map(async (center: any) => {
-          const siteId = String(center.test_center_id ?? center.id ?? center.site_id ?? "");
-          if (!siteId) return { ...center, session_count: 0, lookup_status: "error" };
-          try {
-            const sessionPayload: any = await api(`/exam-sessions?${new URLSearchParams({
-              category_id: String(categoryId),
-              city: String(selectedCity),
-              exam_date: availableDate,
-              test_center_id: siteId,
-              country_id: "78",
-              available_seats: "greater_than::0",
-            }).toString()}`);
-            const liveSessions = Array.isArray(sessionPayload?.exam_sessions) ? sessionPayload.exam_sessions : pickArray(sessionPayload);
-            return { ...center, session_count: liveSessions.length, lookup_status: "ok" };
-          } catch {
-            return { ...center, session_count: 0, lookup_status: "error" };
-          }
-        }));
-
         if (!active) return;
-        const normalized = rawCenters.map((center: any) => ({
-          siteId: String(center.test_center_id ?? center.id ?? center.site_id ?? ""),
-          name: String(center.test_center_name ?? center.name ?? center.title ?? "").trim(),
-          city: String(center.city ?? center.test_center_city ?? selectedCity).trim(),
-          sessionCount: Number(center.session_count ?? 0),
-        })).filter((center: any) => center.siteId && center.name);
+        const allSessions = Array.isArray(data?.sessions) ? data.sessions : pickArray(data);
+        setAllDateSessions(allSessions);
+        setSessions(allSessions);
+
+        const centerMap = new Map<string, { siteId: string; name: string; city: string; sessionCount: number }>();
+        allSessions.forEach((s: any) => {
+          const siteId = String(s?.site_id || s?.test_center?.site_id || s?.test_center?.id || s?.test_center_id || s?.test_center?.test_center_id || "").trim();
+          if (!siteId) return;
+          const name = String(s?.test_center_name || s?.test_center?.name || s?.test_center?.test_center_name || `Center #${siteId}`).trim();
+          const city = String(s?.site_city || s?.test_center?.city || s?.test_center?.test_center_city || selectedCity).trim();
+          const existing = centerMap.get(siteId);
+          if (existing) {
+            existing.sessionCount++;
+          } else {
+            centerMap.set(siteId, { siteId, name, city, sessionCount: 1 });
+          }
+        });
+        const normalized = Array.from(centerMap.values()).sort((a, b) => b.sessionCount - a.sessionCount);
         setDateScopedCenters(normalized);
+        setSelectedCenterId("");
+        setSessionId("");
+        setSiteId("");
+        setSiteCity(selectedCity);
+        setHoldId("");
+        setHoldExpiresAt("");
+        setReservationId("");
+        setPaymentSession(null);
       } catch (err: any) {
         if (!active) return;
-        // Do not offer unverified centres after both lookup paths fail.
         setDateScopedCenters([]);
-        setError(err?.message || "Failed to check centre availability for the selected date");
+        setSessions([]);
+        setAllDateSessions([]);
+        setError(err?.message || "Failed to load exam sessions for the selected date");
       } finally {
         if (active) setLoadingCenterAvailability(false);
       }
@@ -783,36 +763,12 @@ export default function BookingPage() {
     return () => { active = false; };
   }, [selectedCity, availableDate, categoryId]);
 
-  // Sessions are always requested with the exact selected center ID. This is
-  // the key protection against mixing several centers in one city.
+  // Sessions are already loaded by the date effect above. When the user picks
+  // a center, filter the existing sessions locally — no extra API call needed.
   useEffect(() => {
-    let active = true;
-    const retryNotice = sessionRetryNotice;
-    (async () => {
-      if (!selectedCity || !availableDate || !categoryId || !selectedCenterId) { setSessions([]); return; }
-      setLoadingSessions(true);
-      if (!retryNotice) setError("");
-      try {
-        const params = new URLSearchParams({
-          category_id: String(categoryId),
-          city: String(selectedCity),
-          exam_date: availableDate,
-          test_center_id: String(selectedCenterId),
-        });
-        const data: any = await api(`/exam-sessions?${params.toString()}`);
-        if (!active) return;
-        const liveSessions = Array.isArray(data?.exam_sessions) ? data.exam_sessions : pickArray(data);
-        setSessions(filterSessionsForCenter(liveSessions, selectedCenterId));
-        setSessionRetryNotice("");
-      } catch (err: any) {
-        if (!active) return;
-        setSessions([]);
-        if (!retryNotice) setError(err?.message || "Failed to load center-specific exam sessions");
-      }
-      finally { if (active) setLoadingSessions(false); }
-    })();
-    return () => { active = false; };
-  }, [selectedCity, availableDate, categoryId, selectedCenterId, sessionReloadKey]);
+    if (!selectedCenterId || !allDateSessions.length) return;
+    setSessions(filterSessionsForCenter(allDateSessions, selectedCenterId));
+  }, [selectedCenterId]);
 
   // Legacy local center mappings are intentionally not used for the live SVP
   // selection path. The live proxy enriches every center-scoped session with
@@ -1165,10 +1121,6 @@ export default function BookingPage() {
 
   async function createHold() {
     if (!selectedCenterId || !sessionId) { setError("Select a real test center and exam session first"); return; }
-    // Only hold the SELECTED session, not every session in the city.
-    // Holding the whole city would let SVP confirm a different test center
-    // when the booking POST is made with hold_id, because the hold covers
-    // multiple distinct centers in the same city.
     const selectedSessionId = getSessionPayloadId(getSessionId(selectedSession) || sessionId);
     if (selectedSessionId === null) {
       setError("No valid exam session selected for hold creation");
@@ -1205,11 +1157,37 @@ export default function BookingPage() {
         detail?.error,
         detail?.errors?.temporaryseat?.labor_id?.[0],
       ].filter(Boolean).join(" ");
-      const sessionUnavailable = errorCode === "SESSION_UNAVAILABLE" ||
-        errorCode === "CANDIDATE_LABOR_ID_EXISTS" ||
-        /labor_id.*already been taken/i.test(upstreamText) ||
-        /has already been taken/i.test(upstreamText);
-      if (sessionUnavailable) {
+      const alreadyTaken = /has already been taken/i.test(upstreamText) ||
+        /labor_id.*already been taken/i.test(upstreamText);
+      if (alreadyTaken) {
+        // User already has an active hold — try to fetch it and proceed.
+        setStatus("Session already held. Fetching existing hold...");
+        try {
+          const reservations: any = await api("/exam-reservations?locale=en");
+          const rows = Array.isArray(reservations) ? reservations
+            : Array.isArray(reservations?.exam_reservations) ? reservations.exam_reservations
+              : Array.isArray(reservations?.data?.exam_reservations) ? reservations.data.exam_reservations
+                : pickArray(reservations);
+          const myHold = rows.find((r: any) => {
+            const rid = String(r?.id || r?.reservation_id || "");
+            const state = String(r?.status || r?.state || "").toLowerCase();
+            const rSessionId = String(r?.exam_session_id || r?.exam_session?.id || "");
+            return rSessionId === String(selectedSessionId) && (state.includes("hold") || state.includes("pending") || state === "");
+          });
+          if (myHold) {
+            const holdIdVal = String(myHold.id || myHold.hold_id || myHold.temporary_seat_id || "");
+            setHoldId(holdIdVal);
+            setHoldExpiresAt(String(myHold.expired_at || myHold.expires_at || ""));
+            setSiteId(String(selectedCenterId));
+            setSiteCity(String(selectedCity));
+            setStatus(holdIdVal ? `Existing hold reused: #${holdIdVal}. You can proceed to booking.` : "Existing hold found. You can proceed to booking.");
+          } else {
+            setStatus("Session already held but no active reservation found. Try selecting another session.");
+          }
+        } catch {
+          setStatus("Session already held. You may proceed to booking if you have a valid hold.");
+        }
+      } else if (errorCode === "SESSION_UNAVAILABLE" || errorCode === "CANDIDATE_LABOR_ID_EXISTS") {
         setHoldId("");
         setHoldExpiresAt("");
         setReservationId("");
@@ -1286,10 +1264,8 @@ export default function BookingPage() {
         setStatus(`Reservation rescheduled successfully: #${nextReservationId}`);
         if (nextReservationId) await openTicketPdf(String(nextReservationId), data);
       } else {
-        // Normal new booking. The selected encrypted exam_session_id is the
-        // authoritative SVP center binding. The temporary hold is required by
-        // this page as a precondition, but the shared builder deliberately
-        // omits stale center/hold overrides from the SVP confirm request.
+        // Normal new booking. Pass the real hold_id from the temporary seat
+        // so SVP links the reservation to the held seat.
         const data: any = await api("/exam-reservations", {
           method: "POST", body: {
             ...buildExamReservationPayload({
@@ -1298,6 +1274,7 @@ export default function BookingPage() {
               methodology,
               languageCode: effectiveLanguageCode,
             }),
+            hold_id: holdId ? Number(holdId) : null,
             country_id: 78,
             test_center_id: String(selectedCenterId),
             accept_declaration: true,
@@ -1649,15 +1626,6 @@ export default function BookingPage() {
                 <option value="">{loadingCenterAvailability ? "Checking centres for this date…" : loadingSessions ? "Loading live centers…" : "Select live SVP test center"}</option>
                 {centerOptions.map((item) => <option key={item.siteId} value={item.siteId}>{item.name} — Site #{item.siteId}</option>)}
               </select>
-              {loadingCenterAvailability ? <small className="bk-date-help">Checking official SVP session availability for {formatDateLabel(availableDate)}. Only centres with sessions will remain selectable.</small> : null}
-              {!loadingCenterAvailability && dateScopedCenters !== null && !centerOptions.length ? <small className="bk-error-text">No test centre has an available SVP session for {formatDateLabel(availableDate)} in {selectedCity}. Try another date.</small> : null}
-              {!loadingCenterAvailability && dateScopedCenters !== null && centerOptions.length ? <small className="bk-date-help">Only test centres with an available session on the selected date are shown.</small> : null}
-              {selectedCenterOption ? <small className="bk-date-help">Live centre: {selectedCenterOption.name} · ID {selectedCenterOption.siteId} · {selectedCenterOption.city}</small> : null}
-              {selectedCenterOption && availableDate ? (
-                <small className="bk-date-help">
-                  Selected-centre only: a seat can be secured only at {selectedCenterOption.name} on {formatDateLabel(availableDate)}. If that centre has no session on this date, booking stops—no other centre or session is substituted.
-                </small>
-              ) : null}
             </div>
 
             <div className="bk-field">

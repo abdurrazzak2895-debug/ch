@@ -480,10 +480,10 @@ export function normalizeAvailableDateEntries(items: any[]): DateEntry[] {
   const map = new Map<string, DateEntry>();
   items.forEach((item) => {
     const date = getAvailableDateIso(item);
+    if (!date) return;
     const city = getAvailableDateCity(item);
-    if (!date || !city) return;
-    const key = `${city}__${date}`;
-    if (!map.has(key)) map.set(key, { city, date });
+    const key = `${city || "_none_"}__${date}`;
+    if (!map.has(key)) map.set(key, { city: city || "", date });
   });
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date) || a.city.localeCompare(b.city));
 }

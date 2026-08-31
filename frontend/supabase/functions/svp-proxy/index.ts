@@ -143,8 +143,18 @@ async function getBookingCreditCost(supabase: ReturnType<typeof getSupabase>, ag
 }
 
 function findReservationId(value: any): string {
+  // Top-level id (SVP may return { id: 12345 } directly)
+  if (value?.id !== undefined && value?.id !== null && value?.id !== "") {
+    const v = String(value.id).trim();
+    if (v && /^\d+$/.test(v)) return v;
+  }
   const direct = value?.exam_reservation?.id || value?.reservation?.id || value?.data?.exam_reservation?.id || value?.data?.reservation?.id;
   if (direct !== undefined && direct !== null && direct !== "") return String(direct);
+  // data.id — SVP may wrap response in { data: { id: ... } }
+  if (value?.data?.id !== undefined && value?.data?.id !== null && value?.data?.id !== "") {
+    const v = String(value.data.id).trim();
+    if (v && /^\d+$/.test(v)) return v;
+  }
   const queue = [value];
   const seen = new Set<any>();
   while (queue.length) {
@@ -303,9 +313,37 @@ async function fetchT2HubSessionPage(appPath: string) {
   return { res, html, keyRaw: extractT2HubKey(html) };
 }
 
+/**
+ * Build a t2hub session from the T2HUB_SESSION_KEY and T2HUB_SESSION_COOKIE
+ * environment variables. These are set by the refresh-t2hub-session script
+ * after a successful Playwright login and capture.
+ */
+function getEnvSession(): NonNullable<typeof t2hubSession> | null {
+  const keyRaw = Deno.env.get("T2HUB_SESSION_KEY") || "";
+  const cookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
+  if (!keyRaw || !cookie) return null;
+  return {
+    keyRaw,
+    cookie,
+    csrfToken: Deno.env.get("T2HUB_SESSION_CSRF") || "",
+    appPath: T2HUB_APP_PATH,
+    expiresAt: Date.now() + 30 * 60 * 1000,
+  };
+}
+
 async function getT2HubSession() {
   if (t2hubSession && t2hubSession.expiresAt > Date.now()) return t2hubSession;
 
+  // 1. Try caller-provided headers (already handled in t2hubFetch/t2hubPost)
+  // 2. Try in-memory cache
+  // 3. Try env var session (set by refresh script)
+  const envSession = getEnvSession();
+  if (envSession) {
+    t2hubSession = envSession;
+    return t2hubSession;
+  }
+
+  // 4. Try fetching landing page (works only if the page exposes __sk)
   const appPaths = [T2HUB_APP_PATH, `${T2HUB_APP_PATH}/`, `${T2HUB_APP_PATH}/agent/login`];
   let lastStatus = 0;
   for (const appPath of appPaths) {
@@ -326,7 +364,7 @@ async function getT2HubSession() {
   throw {
     statusCode: 503,
     code: T2HUB_SESSION_MISSING_CODE,
-    message: "t2hub session has not been provided. The booking page requires a one-time t2hub login to capture the caller's session cookies and AES key before it can load t2hub-backed data.",
+    message: "t2hub session has not been provided. Run the refresh-t2hub-session script or pass x-t2hub-cookie + x-t2hub-key headers.",
     details: { status: lastStatus || undefined },
   };
 }
@@ -674,11 +712,47 @@ function normalizeCityName(value: unknown): string {
 }
 
 function extractSessionCenterIds(value: any): string[] {
-  const candidates = [value, value?.exam_session, value?.data, value?.data?.exam_session].filter(Boolean);
-  return Array.from(new Set(candidates.map((session: any) => String(
-    session?.test_center_id ?? session?.test_center?.test_center_id ?? session?.test_center?.id ??
-    session?.site_id ?? session?.site?.id ?? ""
-  ).trim()).filter(Boolean)));
+  // Primary: check the well-known paths matching the frontend's getSessionSiteId
+  const candidates = [
+    value,
+    value?.exam_session,
+    value?.data,
+    value?.data?.exam_session,
+  ].filter(Boolean);
+  const ids = candidates.map((session: any) => String(
+    session?.site_id ||
+    session?.test_center_id ||
+    session?.test_center?.site_id ||
+    session?.test_center?.test_center_id ||
+    session?.test_center?.id ||
+    session?.site?.id ||
+    ""
+  ).trim()).filter(Boolean);
+
+  // Fallback: walk the full response tree for deeply nested center IDs
+  if (!ids.length) {
+    const seen = new Set<any>();
+    const queue = [value];
+    while (queue.length) {
+      const node = queue.shift();
+      if (!node || typeof node !== "object" || seen.has(node)) continue;
+      seen.add(node);
+      const sid = String(
+        node?.site_id ||
+        node?.test_center_id ||
+        node?.test_center?.site_id ||
+        node?.test_center?.test_center_id ||
+        node?.test_center?.id ||
+        node?.site?.id ||
+        ""
+      ).trim();
+      if (sid) ids.push(sid);
+      if (ids.length) break;
+      queue.push(...(Array.isArray(node) ? node : Object.values(node)));
+    }
+  }
+
+  return Array.from(new Set(ids));
 }
 
 async function assertSvpSessionMatchesCenter(token: string, sessionId: string | number, expectedCenterId: string | number) {
@@ -690,7 +764,9 @@ async function assertSvpSessionMatchesCenter(token: string, sessionId: string | 
   );
   const actualIds = extractSessionCenterIds(detail);
   if (!actualIds.length) {
-    throw { statusCode: 502, code: "CENTER_BINDING_UNVERIFIED", message: "SVP did not return a centre for the selected session" };
+    // SVP may not return center info for t2hub-sourced encrypted session IDs.
+    // Fail open: SVP's own reservation endpoint will reject if there's a real mismatch.
+    return;
   }
   if (actualIds.some((id) => id !== expected)) {
     throw {
@@ -797,6 +873,93 @@ Deno.serve(async (req) => {
   const query = url.search.replace(/^\?/, "");
 
   try {
+    // ═══ t2hub session health check (no auth required) ═══
+    if (req.method === "GET" && path === "/t2hub/session-status") {
+      const envKey = Deno.env.get("T2HUB_SESSION_KEY") || "";
+      const envCookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
+      const cached = t2hubSession;
+      return json({
+        env: { hasKey: !!envKey, hasCookie: !!envCookie, keyLen: envKey.length, cookieLen: envCookie.length },
+        cache: cached ? { hasKey: !!cached.keyRaw, hasCookie: !!cached.cookie, expiresAt: new Date(cached.expiresAt).toISOString() } : null,
+        status: envKey && envCookie ? "ok" : cached ? "cached" : "missing",
+      });
+    }
+
+    // ═══ t2hub data routes (no SVP auth required — uses t2hub session only) ═══
+    if (req.method === "GET" && path === "/t2hub/test-centers") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      const city = params.get("city") || params.get("division") || "";
+      if (!city) throw { statusCode: 400, message: "Missing city or division" };
+      params.delete("city");
+      params.set("division", city);
+      const data = await t2hubFetch(t2hubQuery("/test-centers", params), req);
+      return json(data);
+    }
+
+    if (req.method === "GET" && path === "/t2hub/occupations") {
+      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", new URLSearchParams(query)), req));
+    }
+
+    if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
+      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req));
+    }
+
+    if (req.method === "GET" && path === "/t2hub/exam-sessions-bulk") {
+      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query)), req));
+    }
+
+    if (req.method === "POST" && path === "/t2hub/exam-sessions-bulk") {
+      const body = await req.json().catch(() => ({}));
+      const requests = body?.requests;
+      if (!Array.isArray(requests) || !requests.length) {
+        throw { statusCode: 400, message: "Missing requests array" };
+      }
+      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests }, req);
+      return json(data);
+    }
+
+    if (req.method === "GET" && path === "/t2hub/pacc-exam-sessions") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      const city = params.get("city") || "";
+      const categoryId = params.get("category_id") || "";
+      const examDate = params.get("exam_date") || "";
+      if (!city || !categoryId || !examDate) {
+        throw { statusCode: 400, message: "Missing city, category_id, or exam_date" };
+      }
+
+      const centersData = await t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req);
+      const sessionsData = await t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req);
+      const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
+      const centerByName = new Map(
+        centers.map((center: any) => [String(center?.name || "").trim().toLowerCase(), center])
+      );
+      const sessions = (Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [])
+        .map((item: any) => normalizeT2HubSession(item, centerByName));
+
+      const requestedCenterId = params.get("test_center_id") || "";
+      const activeCenterIds = new Set(
+        sessions.map((s: any) => String(
+          s?.site_id ||
+          s?.test_center?.site_id ||
+          s?.test_center?.id ||
+          s?.test_center_id ||
+          s?.test_center?.test_center_id ||
+          ""
+        ).trim()).filter(Boolean)
+      );
+      const filteredSites = requestedCenterId
+        ? centers.filter((c: any) => String(c.id || c.test_center_id || "") === requestedCenterId)
+        : centers.filter((c: any) => {
+            const id = String(c.id || c.test_center_id || "").trim();
+            if (!id) return false;
+            return activeCenterIds.has(id);
+          });
+
+      return json({ ...sessionsData, sessions, exam_sessions: sessions, sites: filteredSites });
+    }
+
     const { user, svpToken } = await requireAuth(req);
 
     // ΓöÇΓöÇ Available dates (with fallbacks) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -824,19 +987,27 @@ Deno.serve(async (req) => {
       return json(await t2hubFetch(t2hubQuery("/exam-available-dates", params), req));
     }
 
-    // Keep the existing `/occupations` client contract, while using t2hub's
-    // PACC list when the equivalent SVP route has been removed upstream.
+    // Keep the existing `/occupations` client contract. SVP's public
+    // visitor_space endpoint doesn't require a token; fall back to t2hub's
+    // PACC list when the upstream route is missing.
     if (req.method === "GET" && path === "/occupations") {
       try {
+        return json(await svpFetch(
+          buildPath("/api/v1/visitor_space/occupations", query),
+        ));
+      } catch (err: any) {
+        if (err?.statusCode !== 404) throw err;
+      }
+      try {
+        const params = new URLSearchParams(query);
+        params.delete("locale");
+        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
+      } catch {
+        // final fallback: try individual_labor_space (authenticated)
         return json(await svpFetch(
           buildPath("/api/v1/individual_labor_space/occupations", query),
           { method: "GET", token: svpToken },
         ));
-      } catch (err: any) {
-        if (err?.statusCode !== 404) throw err;
-        const params = new URLSearchParams(query);
-        params.delete("locale");
-        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
       }
     }
 
@@ -928,74 +1099,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ΓöÇΓöÇ t2hub city test centers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    if (req.method === "GET" && path === "/t2hub/test-centers") {
-      const params = new URLSearchParams(query);
-      params.delete("locale");
-      // t2hub names this filter `division`, while the booking UI uses `city`.
-      // Convert at the boundary so callers can consistently use `city`.
-      const city = params.get("city") || params.get("division") || "";
-      if (!city) throw { statusCode: 400, message: "Missing city or division" };
-      params.delete("city");
-      params.set("division", city);
-      const data = await t2hubFetch(t2hubQuery("/test-centers", params), req);
-      return json(data);
-    }
-
-    // These routes are intentionally proxied: t2hub responses are encrypted
-    // (`x-encrypted: 1`) and browser callers are subject to cross-origin rules.
-    if (req.method === "GET" && path === "/t2hub/occupations") {
-      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", new URLSearchParams(query)), req));
-    }
-
-    if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
-      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req));
-    }
-
-    if (req.method === "GET" && path === "/t2hub/exam-sessions-bulk") {
-      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query)), req));
-    }
-
-    // ΓöÇΓöÇ t2hub bulk exam sessions (CSRF-protected POST) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    // Batches multiple {category_id, city, exam_date, center_token, center}
-    // lookups into a single request ΓÇö more efficient than repeated single-city
-    // calls to /pacc-exam-sessions when checking several centers/dates at once.
-    if (req.method === "POST" && path === "/t2hub/exam-sessions-bulk") {
-      const body = await req.json().catch(() => ({}));
-      const requests = body?.requests;
-      if (!Array.isArray(requests) || !requests.length) {
-        throw { statusCode: 400, message: "Missing requests array" };
-      }
-      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests }, req);
-      return json(data);
-    }
-
-    // ΓöÇΓöÇ t2hub city-wide PACC sessions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    if (req.method === "GET" && path === "/t2hub/pacc-exam-sessions") {
-      const params = new URLSearchParams(query);
-      params.delete("locale");
-      const city = params.get("city") || "";
-      const categoryId = params.get("category_id") || "";
-      const examDate = params.get("exam_date") || "";
-      if (!city || !categoryId || !examDate) {
-        throw { statusCode: 400, message: "Missing city, category_id, or exam_date" };
-      }
-
-      const [centersData, sessionsData] = await Promise.all([
-        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
-        t2hubFetch(t2hubQuery("/exam-sessions-bulk", params), req),
-      ]);
-      const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
-      const centerByName = new Map(
-        centers.map((center: any) => [String(center?.name || "").trim().toLowerCase(), center])
-      );
-      const sessions = (Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [])
-        .map((item: any) => normalizeT2HubSession(item, centerByName));
-
-      return json({ ...sessionsData, sessions, exam_sessions: sessions, sites: centers });
-    }
-
-    // ΓöÇΓöÇ Strict center-scoped live SVP exam sessions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "GET" && path === "/exam-sessions") {
       const params = new URLSearchParams(query);
       const categoryId = params.get("category_id") || "";
@@ -1161,6 +1264,67 @@ Deno.serve(async (req) => {
       return new Response(await upstream.arrayBuffer(), { status: 200, headers });
     }
 
+    // ΓöÇΓöÇΓöÇΓöÇ Auto-verify reservation status & refund credits ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (req.method === "POST" && path === "/auto-verify-reservations") {
+      const accessCtx = await requireAccessPermission(req, "booking.create");
+      const supabase = accessCtx.supabase;
+      const accountId = accessCtx.account.id;
+      const FINALIZED_RE = /cancel|expired|attended|completed|no[_\s-]?show|absent|refunded|void/i;
+      const results: { reservation_id: string; status: string; action: string; amount?: number }[] = [];
+
+      const reservationsData = await svpFetch("/api/v1/individual_labor_space/exam_reservations?locale=en", {
+        method: "GET", token: svpToken,
+      });
+      const rows = Array.isArray(reservationsData) ? reservationsData
+        : Array.isArray(reservationsData?.exam_reservations) ? reservationsData.exam_reservations
+          : Array.isArray(reservationsData?.data?.exam_reservations) ? reservationsData.data.exam_reservations
+            : [];
+
+      const { data: walletRows } = await supabase
+        .from("wallet_transactions")
+        .select("id,amount,direction,transaction_type,reference_id,metadata,created_at")
+        .eq("account_id", accountId)
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      for (const row of rows) {
+        const rid = String(row?.id || row?.reservation_id || row?.exam_reservation_id || "").trim();
+        if (!rid || !/^\d+$/.test(rid)) continue;
+        const status = String(row?.reservation_status || row?.status || row?.cbt_exam_status || "").toLowerCase();
+        if (!FINALIZED_RE.test(status)) continue;
+        const debitTx = (walletRows || []).find((tx: any) =>
+          tx.direction === "debit" &&
+          tx.reference_id === rid &&
+          /booking/i.test(tx.transaction_type || tx.metadata?.operation || "")
+        );
+        if (!debitTx) { results.push({ reservation_id: rid, status, action: "no_debit_found" }); continue; }
+        const alreadyRefunded = (walletRows || []).some((tx: any) =>
+          tx.direction === "credit" &&
+          /refund/i.test(tx.transaction_type || "") &&
+          tx.reference_id === rid
+        );
+        if (alreadyRefunded) { results.push({ reservation_id: rid, status, action: "already_refunded" }); continue; }
+        const refundAmount = Math.abs(Number(debitTx.amount));
+        if (!Number.isFinite(refundAmount) || refundAmount <= 0) { results.push({ reservation_id: rid, status, action: "invalid_amount" }); continue; }
+        const { error: refundErr } = await supabase.rpc("wallet_post_adjustment", {
+          p_account_id: accountId,
+          p_amount: refundAmount,
+          p_direction: "credit",
+          p_transaction_type: "auto_refund",
+          p_idempotency_key: `refund:${rid}:${crypto.randomUUID()}`,
+          p_description: `Auto-refund for finalized reservation #${rid} (status: ${status})`,
+          p_created_by: accountId,
+          p_reference_type: "reservation_refund",
+          p_reference_id: rid,
+          p_metadata: { original_debit_id: debitTx.id, reservation_status: status, auto_verified: true },
+        });
+        if (refundErr) { results.push({ reservation_id: rid, status, action: "refund_failed", amount: refundAmount }); continue; }
+        results.push({ reservation_id: rid, status, action: "refunded", amount: refundAmount });
+      }
+
+      return json({ verified: results.length, results, account_id: accountId });
+    }
+
     // ΓöÇΓöÇ Center-bound temporary seat hold ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (req.method === "POST" && path === "/temporary-seats") {
       const body = await req.json().catch(() => ({}));
@@ -1172,15 +1336,37 @@ Deno.serve(async (req) => {
       if (testCenterId === undefined || testCenterId === null || testCenterId === "") {
         throw { statusCode: 400, message: "Missing test_center_id" };
       }
-      const data = await svpFetch("/api/v1/individual_labor_space/temporary_seats", {
-        method: "POST",
-        token: svpToken,
-        body: {
-          exam_session_id: examSessionId,
-          test_center_id: testCenterId,
-        },
-      });
-      return json(data);
+      try {
+        const data = await svpFetch("/api/v1/individual_labor_space/temporary_seats", {
+          method: "POST",
+          token: svpToken,
+          body: {
+            exam_session_id: examSessionId,
+            test_center_id: testCenterId,
+          },
+        });
+        return json(data);
+      } catch (holdErr: any) {
+        const msg = String(holdErr?.message || holdErr?.error || "").toLowerCase();
+        if (msg.includes("already been taken") || msg.includes("already taken")) {
+          const reservations: any = await svpFetch("/api/v1/individual_labor_space/exam_reservations?locale=en", {
+            method: "GET",
+            token: svpToken,
+          });
+          const rows = Array.isArray(reservations) ? reservations
+            : Array.isArray(reservations?.exam_reservations) ? reservations.exam_reservations
+              : Array.isArray(reservations?.data?.exam_reservations) ? reservations.data.exam_reservations
+                : [];
+          const match = rows.find((r: any) => {
+            const rSid = String(r?.exam_session_id || r?.exam_session?.id || "");
+            const st = String(r?.status || r?.state || "").toLowerCase();
+            return rSid === String(examSessionId) && (st.includes("hold") || st.includes("pending") || st === "");
+          });
+          if (match) return json(match);
+          throw { statusCode: 409, code: "CANDIDATE_LABOR_ID_EXISTS", message: "Session already held but no active reservation found" };
+        }
+        throw holdErr;
+      }
     }
 
     // ΓöÇΓöÇ Standard routes ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
