@@ -1,0 +1,13 @@
+{
+  "name": "choyes",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "refresh-t2hub-session": "node scripts/refresh-t2hub-session.mjs",
+    "capture-t2hub-session": "node scripts/capture-t2hub-session.cjs",
+    "capture-booking": "node scripts/capture-booking-flow.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

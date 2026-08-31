@@ -64,7 +64,7 @@ const App = () => (
               <Route path="/auth/otp" element={<AccessProtectedRoute allowedRoles={["USER"]}><OtpPage /></AccessProtectedRoute>} />
               <Route path="/auth/register" element={<RegisterPage />} />
               <Route path="/user" element={<Navigate to="/auth/login" replace />} />
-              <Route path="/dashboard" element={<AccessProtectedRoute allowedRoles={["USER"]}><ProtectedRoute><DashboardPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/dashboard" element={<AccessProtectedRoute allowedRoles={["USER"]}><DashboardPage /></AccessProtectedRoute>} />
               <Route path="/exam/booking" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="booking.create"><ProtectedRoute><BookingPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/payment" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/payment/result" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentResultPage /></ProtectedRoute></AccessProtectedRoute>} />
