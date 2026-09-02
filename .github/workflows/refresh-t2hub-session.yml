@@ -24,6 +24,16 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Prepare T2Hub credentials
+        env:
+          T2HUB_EMAIL: ${{ secrets.T2HUB_EMAIL }}
+          T2HUB_PASSWORD: ${{ secrets.T2HUB_PASSWORD }}
+          T2HUB_URL: ${{ secrets.T2HUB_URL }}
+        run: |
+          umask 077
+          printf 'T2HUB_EMAIL=%s\nT2HUB_PASSWORD=%s\nT2HUB_URL=%s\n' \
+            "$T2HUB_EMAIL" "$T2HUB_PASSWORD" "$T2HUB_URL" > .env.t2hub
+
       - name: Refresh session
         env:
           T2HUB_EMAIL: ${{ secrets.T2HUB_EMAIL }}
