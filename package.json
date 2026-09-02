@@ -11,6 +11,7 @@
     "capture-booking": "node scripts/capture-booking-flow.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "supabase": "^2.116.0"
   }
 }
