@@ -148,3 +148,60 @@
 .ap-admin-controls .ap-btn:disabled { opacity: .58; cursor: not-allowed; }
 @media (max-width: 900px) { .ap-admin-controls .af-layout { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .ap-admin-controls .af-head { padding: 20px; } .ap-admin-controls .af-head h1 { font-size: 21px; } .ap-admin-controls .af-account { align-items: flex-start; flex-direction: column; } .ap-admin-controls .af-account span { text-align: left; } .ap-admin-controls .af-row { grid-template-columns: minmax(170px, 1fr) auto; gap: 10px; } .ap-admin-controls .af-row > div:last-child { grid-column: 1/-1; } }
+
+/* ── Live refresh controls ──────────────────────────────────────── */
+.ap-live-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+}
+.ap-live-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid #dfe4ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #7c86a4;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s;
+}
+.ap-live-toggle--on {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+.ap-live-toggle svg { width: 14px; height: 14px; }
+.ap-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #dfe4ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #52617e;
+  cursor: pointer;
+  transition: all .2s;
+}
+.ap-refresh-btn:hover { border-color: #4964f4; color: #4964f4; }
+.ap-refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ap-refresh-btn svg { width: 16px; height: 16px; }
+.ap-last-refreshed {
+  color: #9199b8;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ap-spinning {
+  animation: ap-spin 1s linear infinite;
+}
+@keyframes ap-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

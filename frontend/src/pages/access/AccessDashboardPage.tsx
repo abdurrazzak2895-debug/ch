@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Activity, Building2, CircleUserRound, Database, FileSliders,
-  LayoutDashboard, LogOut, Megaphone, Plus, SearchCheck, Server, ShieldCheck, Users, WalletCards,
+  LayoutDashboard, LogOut, Megaphone, Plus, RefreshCw, SearchCheck, Server, ShieldCheck, Users, WalletCards,
 } from "lucide-react";
 import { useAccessAuth } from "@/contexts/AccessAuthContext";
 import { accessAdminApi, accessAgencyApi } from "@/lib/access-api";
@@ -41,35 +41,55 @@ function formatDate(value?: string) {
   return Number.isNaN(date.getTime()) ? "Recently" : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
+
 export default function AccessDashboardPage() {
   const { user, logout } = useAccessAuth();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [adminDashboard, setAdminDashboard] = useState<AdminDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const isAdmin = user?.role === "ADMIN";
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    else setRefreshing(true);
+    setError("");
+    try {
+      if (isAdmin) {
+        const dashboard = await accessAdminApi<AdminDashboardData>("/dashboard");
+        setAdminDashboard(dashboard);
+        setAccounts(dashboard.recentAccounts || []);
+      } else {
+        const nextAccounts = (await accessAgencyApi<{ users: Account[] }>("/users")).users;
+        setAccounts(nextAccounts || []);
+      }
+      setLastRefreshed(new Date());
+    } catch (err: unknown) {
+      const value = err as { message?: string };
+      setError(value.message || "Could not load dashboard data");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [isAdmin]);
 
   useEffect(() => {
-    let active = true;
-    async function load() {
-      setLoading(true); setError("");
-      try {
-        if (isAdmin) {
-          const dashboard = await accessAdminApi<AdminDashboardData>("/dashboard");
-          if (active) { setAdminDashboard(dashboard); setAccounts(dashboard.recentAccounts || []); }
-        } else {
-          const nextAccounts = (await accessAgencyApi<{ users: Account[] }>("/users")).users;
-          if (active) setAccounts(nextAccounts || []);
-        }
-      } catch (error: unknown) {
-        const value = error as { message?: string };
-        if (active) setError(value.message || "Could not load dashboard data");
-      } finally { if (active) setLoading(false); }
+    if (user) void load(true);
+  }, [user, load]);
+
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (autoRefresh && user) {
+      intervalRef.current = setInterval(() => { void load(false); }, REFRESH_INTERVAL_MS);
     }
-    if (user) void load();
-    return () => { active = false; };
-  }, [isAdmin, user]);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [autoRefresh, user, load]);
 
   const stats = useMemo(() => {
     const active = accounts.filter((item) => item.status === "ACTIVE").length;
@@ -129,6 +149,24 @@ export default function AccessDashboardPage() {
             <strong>Welcome back, {user?.name || "User"}</strong>
           </div>
           <div className="ap-account">
+            <div className="ap-live-controls">
+              <button
+                className={`ap-live-toggle ${autoRefresh ? "ap-live-toggle--on" : ""}`}
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                title={autoRefresh ? "Auto-refresh ON (30s)" : "Auto-refresh OFF"}
+              >
+                <RefreshCw className={refreshing ? "ap-spinning" : ""} />
+                <span>{autoRefresh ? "Live" : "Paused"}</span>
+              </button>
+              <button className="ap-refresh-btn" onClick={() => void load(false)} disabled={refreshing} title="Refresh now">
+                <RefreshCw className={refreshing ? "ap-spinning" : ""} />
+              </button>
+              {lastRefreshed && (
+                <span className="ap-last-refreshed">
+                  {lastRefreshed.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
+              )}
+            </div>
             <span className={`ap-role ap-role--${isAdmin ? "admin" : "agency"}`}>{user?.role}</span>
             <span className="ap-avatar">{initials(user?.name)}</span>
             <div><strong>{user?.name}</strong><small>{user?.email}</small></div>
