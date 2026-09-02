@@ -178,7 +178,18 @@ async function reconcileFinalizedReservationRefunds(
       row?.reservation_status || row?.status || row?.state || row?.cbt_exam_status || "",
     ).toLowerCase();
     const cancellationTimestamp = row?.cancelled_at || row?.canceled_at || row?.cancellation_date || row?.cancelledAt;
-    if (!isRefundEligibleReservation(status, cancellationTimestamp)) continue;
+
+    // Check if refund-eligible (finalized status OR has cancellation timestamp)
+    const eligible = isRefundEligibleReservation(status, cancellationTimestamp);
+    // Also check for reservations with NO status (might be failed/missing upstream)
+    const noStatus = !status || status === "unknown" || status === "";
+    if (!eligible && !noStatus) continue;
+
+    // Skip if status is still active/pending (not yet finalized)
+    if (!eligible && noStatus) {
+      // For no-status reservations, check if they have a cancellation timestamp
+      if (!cancellationTimestamp) continue;
+    }
 
     const debitTx = (walletRows || []).find((tx: any) =>
       tx.direction === "debit" &&
@@ -207,8 +218,8 @@ async function reconcileFinalizedReservationRefunds(
     const { data: refundTx, error: refundError } = await supabase.rpc("wallet_refund_booking", {
       p_account_id: accountId,
       p_reservation_id: reservationId,
-      p_status: status,
-      p_metadata: { source: "svp-proxy", reservation_status: status },
+      p_status: status || "unknown",
+      p_metadata: { source: "svp-proxy-reconcile", reservation_status: status, cancellation_timestamp: cancellationTimestamp },
     });
     if (refundError) {
       // A concurrent request may have created the deterministic refund between
@@ -218,6 +229,72 @@ async function reconcileFinalizedReservationRefunds(
       continue;
     }
     results.push({ reservation_id: reservationId, status, action: "refunded", amount: Number(refundTx?.amount || refundAmount) });
+  }
+  return results;
+}
+
+/**
+ * Check wallet debits that have no matching reservation and auto-refund.
+ * This catches cases where:
+ * 1. Booking was created (debit happened)
+ * 2. Upstream booking failed
+ * 3. Reservation was never returned by SVP (or was deleted)
+ */
+async function reconcileOrphanedDebits(
+  supabase: ReturnType<typeof getSupabase>,
+  accountId: string,
+  reservationsPayload: any,
+) {
+  const rows = extractReservationRows(reservationsPayload);
+  const reservationIds = new Set<string>();
+  for (const row of rows) {
+    const id = String(row?.id || row?.reservation_id || row?.exam_reservation_id || "").trim();
+    if (id) reservationIds.add(id);
+  }
+
+  const { data: walletRows, error: walletError } = await supabase
+    .from("wallet_transactions")
+    .select("id,amount,direction,transaction_type,reference_id,reference_type,idempotency_key,metadata,created_at")
+    .eq("account_id", accountId)
+    .eq("direction", "debit")
+    .eq("transaction_type", "booking_debit")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (walletError) throw walletError;
+
+  const results: { reservation_id: string; status: string; action: string; amount?: number }[] = [];
+  const now = Date.now();
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+
+  for (const debitTx of (walletRows || [])) {
+    const reservationId = String(debitTx.reference_id || "").trim();
+    if (!reservationId) continue;
+
+    // Skip if reservation exists in SVP response
+    if (reservationIds.has(reservationId)) continue;
+
+    // Only refund debits older than 1 hour (give SVP time to process)
+    const debitAge = now - new Date(debitTx.created_at).getTime();
+    if (debitAge < ONE_HOUR_MS) continue;
+
+    const refundKey = getReservationRefundIdempotencyKey(accountId, reservationId);
+    const alreadyRefunded = (walletRows || []).find((tx: any) => tx.idempotency_key === refundKey);
+    if (alreadyRefunded) continue;
+
+    const refundAmount = Math.abs(Number(debitTx.amount));
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) continue;
+
+    const { data: refundTx, error: refundError } = await supabase.rpc("wallet_refund_booking", {
+      p_account_id: accountId,
+      p_reservation_id: reservationId,
+      p_status: "orphaned",
+      p_metadata: { source: "svp-proxy-orphan-cleanup", original_debit_created: debitTx.created_at },
+    });
+    if (refundError) {
+      results.push({ reservation_id: reservationId, status: "orphaned", action: "refund_failed", amount: refundAmount });
+      continue;
+    }
+    results.push({ reservation_id: reservationId, status: "orphaned", action: "refunded", amount: Number(refundTx?.amount || refundAmount) });
   }
   return results;
 }
@@ -1355,7 +1432,12 @@ Deno.serve(async (req) => {
         accessCtx.account.id,
         reservationsData,
       );
-      return json({ verified: results.length, results, account_id: accessCtx.account.id });
+      const orphanResults = await reconcileOrphanedDebits(
+        accessCtx.supabase,
+        accessCtx.account.id,
+        reservationsData,
+      );
+      return json({ verified: results.length + orphanResults.length, results: [...results, ...orphanResults], account_id: accessCtx.account.id });
     }
 
     // ΓöÇΓöÇ Center-bound temporary seat hold ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -1499,6 +1581,15 @@ Deno.serve(async (req) => {
               accessContext.account.id,
               data,
             );
+            // Also check for orphaned debits (debits with no matching reservation)
+            const orphanResults = await reconcileOrphanedDebits(
+              accessContext.supabase,
+              accessContext.account.id,
+              data,
+            );
+            if (orphanResults.length) {
+              walletReconciliation.push(...orphanResults);
+            }
           } catch (reconciliationError) {
             console.error("automatic reservation refund reconciliation failed", reconciliationError);
           }

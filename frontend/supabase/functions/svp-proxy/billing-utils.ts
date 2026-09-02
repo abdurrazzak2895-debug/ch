@@ -1,6 +1,6 @@
 export type ReservationBillingOperation = "booking" | "reschedule";
 
-const FINALIZED_RESERVATION_STATUS_RE = /cancel|expired|attended|completed|no[_\s-]?show|absent|refunded|void|fail|declin|reject|error/i;
+const FINALIZED_RESERVATION_STATUS_RE = /cancel|expired|attended|completed|no[_\s-]?show|absent|refunded|void|fail|declin|reject|error|closed/i;
 
 export function getReservationBillingOperation(
   method: string,
@@ -23,9 +23,17 @@ export function isRefundEligibleReservation(
   status: string | null | undefined,
   cancellationTimestamp?: string | null,
 ): boolean {
-  return Boolean(String(cancellationTimestamp ?? "").trim()) || FINALIZED_RESERVATION_STATUS_RE.test(String(status ?? ""));
+  if (Boolean(String(cancellationTimestamp ?? "").trim())) return true;
+  const s = String(status ?? "").toLowerCase().trim();
+  if (!s) return false;
+  return FINALIZED_RESERVATION_STATUS_RE.test(s);
 }
 
 export function getReservationRefundIdempotencyKey(accountId: string, reservationId: string | number): string {
   return `refund:${accountId}:${String(reservationId).trim()}`;
+}
+
+export function isNonRefundableStatus(status: string | null | undefined): boolean {
+  const s = String(status ?? "").toLowerCase().trim();
+  return /active|pending|reserved|hold|scheduled|booked|confirm|processing/.test(s);
 }
