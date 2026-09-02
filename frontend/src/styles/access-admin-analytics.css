@@ -69,3 +69,82 @@
 @media (max-width: 1200px) { .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1024px) { .ap-admin-dashboard .ap-main { padding: 22px 20px 40px; } .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 640px) { .ap-admin-dashboard .ap-stats { grid-template-columns: repeat(2, 1fr); } .ap-admin-dashboard .ap-hero { padding: 24px 20px; } .ap-admin-dashboard .ap-hero h1 { font-size: 21px; } }
+
+/* ── Admin Permissions & Wallets console ───────────────────────────── */
+.ap-admin-controls .af-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 24px 26px;
+  border-radius: 18px;
+  background: linear-gradient(120deg, #263a92, #3d55dc 58%, #148d94);
+  color: #fff;
+  box-shadow: 0 16px 30px rgba(50,70,177,.18);
+}
+.ap-admin-controls .af-head > svg { width: 24px; height: 24px; padding: 12px; border-radius: 13px; background: rgba(255,255,255,.14); flex: 0 0 auto; }
+.ap-admin-controls .af-head small { color: rgba(255,255,255,.72); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.ap-admin-controls .af-head h1 { margin: 5px 0 4px; font-size: 25px; letter-spacing: -.025em; }
+.ap-admin-controls .af-head p { margin: 0; color: rgba(255,255,255,.8); font-size: 13px; }
+.ap-admin-controls .af-message { margin-bottom: 18px; }
+.ap-admin-controls .af-booking-cost { display: grid; gap: 20px; padding: 22px; background: #fff; }
+.ap-admin-controls .af-booking-cost > div small,
+.ap-admin-controls .af-control > label,
+.ap-admin-controls .af-wallet > small { color: #7c86a4; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.ap-admin-controls .af-booking-cost h2 { margin: 5px 0 5px; color: #17213d; font-size: 18px; }
+.ap-admin-controls .af-booking-cost p { max-width: 720px; margin: 0; color: #7c86a4; font-size: 12px; line-height: 1.5; }
+.ap-admin-controls .af-booking-cost form { display: grid; gap: 12px; }
+.ap-admin-controls .af-booking-cost form > label,
+.ap-admin-controls .af-control > label { display: grid; gap: 6px; color: #596481; font-size: 11px; font-weight: 700; }
+.ap-admin-controls .af-booking-cost input,
+.ap-admin-controls .af-booking-cost select,
+.ap-admin-controls .af-control > select,
+.ap-admin-controls .af-wallet input,
+.ap-admin-controls .af-wallet select { min-height: 42px; padding: 9px 11px; border: 1px solid #dfe4ef; border-radius: 9px; background: #fbfcff; color: #17213d; font: inherit; }
+.ap-admin-controls .af-booking-cost input:focus,
+.ap-admin-controls .af-booking-cost select:focus,
+.ap-admin-controls .af-control > select:focus,
+.ap-admin-controls .af-wallet input:focus,
+.ap-admin-controls .af-wallet select:focus { outline: 0; border-color: #4964f4; box-shadow: 0 0 0 3px rgba(73,100,244,.12); }
+.ap-admin-controls .af-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr); gap: 18px; align-items: start; }
+.ap-admin-controls .af-control,
+.ap-admin-controls .af-wallet { padding: 22px; }
+.ap-admin-controls .af-control > select { width: 100%; margin: 8px 0 16px; }
+.ap-admin-controls .af-account { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 20px; padding: 13px 15px; border: 1px solid #e3e7f0; border-radius: 12px; background: #f8f9ff; }
+.ap-admin-controls .af-account strong { color: #17213d; font-size: 15px; }
+.ap-admin-controls .af-account span { color: #7c86a4; font-size: 11px; text-align: right; }
+.ap-admin-controls .af-control h2 { margin: 0 0 5px; color: #17213d; font-size: 17px; }
+.ap-admin-controls .af-helper { margin: 0 0 14px; color: #7c86a4; font-size: 12px; line-height: 1.5; }
+.ap-admin-controls .af-permissions { display: grid; gap: 9px; margin-bottom: 16px; }
+.ap-admin-controls .af-permission { display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px; border: 1px solid #e1e6f0; border-radius: 11px; background: #fff; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+.ap-admin-controls .af-permission:hover { border-color: #aebaff; background: #fbfcff; transform: translateY(-1px); }
+.ap-admin-controls .af-permission:has(input:checked) { border-color: #92a1ff; background: #f1f3ff; }
+.ap-admin-controls .af-permission input { width: 17px; height: 17px; margin: 2px 0 0; accent-color: #4964f4; }
+.ap-admin-controls .af-permission span { display: grid; gap: 3px; }
+.ap-admin-controls .af-permission strong { color: #17213d; font-size: 13px; }
+.ap-admin-controls .af-permission small { color: #7c86a4; font-size: 11px; line-height: 1.4; }
+.ap-admin-controls .af-wallet { display: grid; gap: 7px; background: linear-gradient(145deg, #111a35, #1d2a55); color: #fff; }
+.ap-admin-controls .af-wallet > svg { width: 22px; height: 22px; color: #7fe3b8; margin-bottom: 4px; }
+.ap-admin-controls .af-wallet > small { color: #8e9bc1; }
+.ap-admin-controls .af-wallet > strong { font-size: 34px; line-height: 1.1; }
+.ap-admin-controls .af-wallet > span { color: #aeb9d4; font-size: 11px; }
+.ap-admin-controls .af-wallet form { display: grid; gap: 9px; margin-top: 15px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.12); }
+.ap-admin-controls .af-wallet form h2 { margin: 0 0 3px; font-size: 16px; }
+.ap-admin-controls .af-wallet input,
+.ap-admin-controls .af-wallet select { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.08); color: #fff; }
+.ap-admin-controls .af-wallet select option { color: #17213d; }
+.ap-admin-controls .af-table { padding: 22px; }
+.ap-admin-controls .af-rows { display: grid; gap: 0; overflow-x: auto; }
+.ap-admin-controls .af-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; gap: 18px; align-items: center; padding: 13px 0; border-bottom: 1px solid #edf0f6; }
+.ap-admin-controls .af-row:last-child { border-bottom: 0; }
+.ap-admin-controls .af-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.ap-admin-controls .af-row strong { color: #17213d; font-size: 13px; }
+.ap-admin-controls .af-row small { color: #7c86a4; font-size: 10px; white-space: normal; }
+.ap-admin-controls .af-row > b { color: #0d9c8d; white-space: nowrap; }
+.ap-admin-controls .af-row > div:last-child { display: flex; gap: 6px; }
+.ap-admin-controls .af-row button { padding: 5px 9px; border: 1px solid #dfe4ef; border-radius: 7px; background: #fff; color: #52617e; font-size: 11px; font-weight: 700; cursor: pointer; }
+.ap-admin-controls .af-row button:first-child { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+.ap-admin-controls .af-row button:last-child { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+.ap-admin-controls .ap-btn:disabled { opacity: .58; cursor: not-allowed; }
+@media (max-width: 900px) { .ap-admin-controls .af-layout { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .ap-admin-controls .af-head { padding: 20px; } .ap-admin-controls .af-head h1 { font-size: 21px; } .ap-admin-controls .af-account { align-items: flex-start; flex-direction: column; } .ap-admin-controls .af-account span { text-align: left; } .ap-admin-controls .af-row { grid-template-columns: minmax(170px, 1fr) auto; gap: 10px; } .ap-admin-controls .af-row > div:last-child { grid-column: 1/-1; } }

@@ -98,8 +98,9 @@ export default function AccessAccountsPage() {
         </div>
         <nav className="sidebar-nav">
           <Link className={`nav-item ${location.pathname === "/access/dashboard" ? "nav-item--active" : ""}`} to="/access/dashboard">Dashboard</Link>
-          <Link className={`nav-item ${location.pathname === "/access/accounts" ? "nav-item--active" : ""}`} to="/access/accounts">All Accounts</Link>
+          <Link className={`nav-item ${location.pathname === "/access/accounts" ? "nav-item--active" : ""}`} to="/access/accounts">User Management</Link>
           <Link className={`nav-item ${location.pathname === "/access/users" ? "nav-item--active" : ""}`} to="/access/users">Create Users</Link>
+          <Link className={`nav-item ${location.pathname === "/access/finance" ? "nav-item--active" : ""}`} to="/access/finance">Permissions & Wallets</Link>
           <Link className={`nav-item ${location.pathname === "/access/agencies" ? "nav-item--active" : ""}`} to="/access/agencies">Create Agency</Link>
           <Link className={`nav-item ${location.pathname === "/access/test-centers" ? "nav-item--active" : ""}`} to="/access/test-centers">Test Centers</Link>
           <Link className={`nav-item ${location.pathname === "/access/session-centers" ? "nav-item--active" : ""}`} to="/access/session-centers">Session Centers</Link>
@@ -117,7 +118,13 @@ export default function AccessAccountsPage() {
         </header>
 
         <section style={{ padding: "24px 40px" }}>
-          <h1 style={{ margin: "0 0 16px" }}>All Accounts</h1>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap", marginBottom: "16px" }}>
+            <h1 style={{ margin: 0 }}>User Management</h1>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <Link to="/access/users" style={{ padding: "8px 14px", borderRadius: "8px", background: "#4f5fff", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 700 }}>Create User</Link>
+              <Link to="/access/finance" style={{ padding: "8px 14px", borderRadius: "8px", background: "#eef0ff", color: "#4f5fff", textDecoration: "none", fontSize: "13px", fontWeight: 700 }}>Permissions & Wallets</Link>
+            </div>
+          </div>
 
           <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
             <select value={filterRole} onChange={(e) => setFilterRole(e.target.value)}
@@ -198,15 +205,21 @@ export default function AccessAccountsPage() {
                         )}
                       </td>
                       <td style={tdStyle}>
-                        <button
-                          onClick={() => { setPwModalId(acc.id); setPwModalName(acc.name); setNewPassword(""); setPwMsg(""); }}
-                          style={{
-                            padding: "4px 10px", borderRadius: "6px", border: "1px solid #1976d2",
-                            background: "#e3f2fd", color: "#1565c0", cursor: "pointer", fontSize: "12px", fontWeight: 600,
-                          }}
-                        >
-                          Change Password
-                        </button>
+                          <Link
+                            to={`/access/finance?account=${encodeURIComponent(acc.id)}`}
+                            style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #f59e0b", background: "#fff7e6", color: "#a16207", textDecoration: "none", fontSize: "12px", fontWeight: 600 }}
+                          >
+                            Permissions
+                          </Link>
+                          <button
+                            onClick={() => { setPwModalId(acc.id); setPwModalName(acc.name); setNewPassword(""); setPwMsg(""); }}
+                            style={{
+                              padding: "4px 10px", borderRadius: "6px", border: "1px solid #1976d2",
+                              background: "#e3f2fd", color: "#1565c0", cursor: "pointer", fontSize: "12px", fontWeight: 600,
+                            }}
+                          >
+                            Change Password
+                          </button>
                       </td>
                     </tr>
                   ))}

@@ -4,6 +4,7 @@ import { apiAuth, clearSession, getSession } from "@/lib/api";
 import {
   fetchPaymentHistory,
   summarizePayments,
+  classifyPaymentStatus,
   type PaymentRecord,
 } from "@/lib/payments";
 import "@/styles/dashboard-premium.css";
@@ -86,6 +87,83 @@ const BADGE_LABEL: Record<PaymentRecord["status"], string> = {
   unknown: "Unknown",
 };
 
+function pickReservationArray(payload: any): any[] {
+  const singleHints = ["reservation_id", "reservation_status", "final_result", "labor", "test_center", "prometric_data"];
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object" && singleHints.some((key) => key in payload)) return [payload];
+  const candidates = [
+    payload?.data, payload?.items, payload?.result, payload?.payload,
+    payload?.exam_reservations, payload?.reservations,
+    payload?.data?.items, payload?.data?.result, payload?.data?.payload,
+    payload?.data?.exam_reservations, payload?.data?.reservations,
+    payload?.result?.items, payload?.result?.exam_reservations,
+  ];
+  for (const item of candidates) {
+    if (Array.isArray(item)) return item;
+    if (item && typeof item === "object" && singleHints.some((key) => key in item)) return [item];
+  }
+  return [];
+}
+
+function reservationValue(item: any, keys: string[]) {
+  for (const key of keys) {
+    if (item?.[key] !== undefined && item?.[key] !== null && item?.[key] !== "") return item[key];
+    if (item?.data?.[key] !== undefined && item?.data?.[key] !== null && item?.data?.[key] !== "") return item.data[key];
+    if (item?.exam_session?.[key] !== undefined && item?.exam_session?.[key] !== null && item.exam_session[key] !== "") return item.exam_session[key];
+  }
+  return "";
+}
+
+function reservationId(item: any) {
+  return String(reservationValue(item, ["id", "reservation_id", "exam_reservation_id"]) || "-");
+}
+
+function reservationOccupation(item: any) {
+  return String(
+    item?.occupation?.english_name || item?.occupation?.name ||
+    item?.exam_session?.occupation?.english_name || item?.exam_session?.occupation?.name ||
+    reservationValue(item, ["occupation_name", "occupation_english_name", "occupation_id"]) || "-"
+  );
+}
+
+function reservationDate(item: any) {
+  return String(
+    item?.exam_session?.test_date || item?.exam_session?.start_at_in_browser_time_zone ||
+    reservationValue(item, ["exam_date", "scheduled_at", "date", "test_date", "start_at_in_browser_time_zone", "start_at"]) || ""
+  );
+}
+
+function reservationCenter(item: any) {
+  return String(
+    item?.exam_session?.test_center?.test_center_name || item?.exam_session?.test_center?.name ||
+    item?.test_center?.test_center_name || item?.test_center?.name ||
+    reservationValue(item, ["test_center_name", "site_city", "city"]) || "-"
+  );
+}
+
+function reservationState(item: any) {
+  const raw = String(reservationValue(item, ["reservation_status", "status", "cbt_exam_status", "final_result"]) || "").trim();
+  const normalized = raw.toLowerCase();
+  const type = /fail|declin|reject|cancel|expired|void|error|unsuccessful/.test(normalized)
+    ? "failed"
+    : /pending|processing|hold|initiated|created|payment_required/.test(normalized)
+      ? "pending"
+      : /pass|success|successful|booked|confirm|complete|settled|captured|paid/.test(normalized)
+        ? "success"
+        : "unknown";
+  return { type, label: raw ? raw.replace(/[_-]+/g, " ") : "Unknown" } as const;
+}
+
+function dashboardPaymentStatus(item: any, payments: PaymentRecord[]) {
+  const id = reservationId(item);
+  const local = localStorage.getItem(`paymentStatus:${id}`);
+  if (local === "success" || local === "failed" || local === "pending") return local as PaymentRecord["status"];
+  const matching = payments.find((payment) => payment.reservationId === id);
+  if (matching) return matching.status;
+  const raw = reservationValue(item, ["payment_status", "paymentStatus", "pay_status", "paid_status"]);
+  return classifyPaymentStatus(String(raw || ""));
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user: accessUser, hasPermission } = useAccessAuth();
@@ -97,6 +175,9 @@ export default function DashboardPage() {
 
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [paymentsSource, setPaymentsSource] = useState<string>("");
+  const [reservations, setReservations] = useState<any[]>([]);
+  const [reservationsLoading, setReservationsLoading] = useState(true);
+  const [reservationsError, setReservationsError] = useState("");
   const [paymentsLoading, setPaymentsLoading] = useState(true);
   const [paymentsError, setPaymentsError] = useState("");
   const [walletData, setWalletData] = useState<DashboardWalletData | null>(null);
@@ -114,6 +195,7 @@ export default function DashboardPage() {
     setMe(payload ? { login: payload.login || "User", name: payload.name, role: payload.role } : { login: "User" });
     setLoading(false);
     void loadPayments();
+    void loadReservations();
     void loadWallet();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
@@ -130,6 +212,20 @@ export default function DashboardPage() {
       setPaymentsError(err?.message || "Failed to load payment history");
     } finally {
       setPaymentsLoading(false);
+    }
+  }
+
+  async function loadReservations() {
+    setReservationsLoading(true);
+    setReservationsError("");
+    try {
+      const data = await api("/exam-reservations?locale=en");
+      setReservations(pickReservationArray(data).slice(0, 8));
+    } catch (err: any) {
+      setReservations([]);
+      setReservationsError(err?.message || "Failed to load booking status");
+    } finally {
+      setReservationsLoading(false);
     }
   }
 
@@ -356,6 +452,33 @@ export default function DashboardPage() {
             <span className="dp-stat-label">Pending</span>
             <strong>{paymentsLoading ? "…" : summary.pending}</strong>
           </div>
+        </section>
+
+        <section className="dp-panel dp-bookings-panel">
+          <div className="dp-panel-head">
+            <div><h2>Booking status</h2><span className="dp-sub">Every reservation is listed with its current booking and payment outcome.</span></div>
+            <div style={{ display: "flex", gap: "10px" }}><button className="dp-btn" type="button" onClick={loadReservations} disabled={reservationsLoading}>{reservationsLoading ? "Refreshing…" : "↻ Refresh"}</button><Link className="dp-btn" to="/exam/reservations">Open My bookings →</Link></div>
+          </div>
+          {reservationsError && <div className="dp-error">{reservationsError}</div>}
+          {reservationsLoading ? <div className="dp-empty">Loading booking status…</div> : !reservations.length && !reservationsError ? <div className="dp-empty">No bookings found yet. Completed and failed attempts will appear here.</div> : null}
+          {!reservationsLoading && reservations.length ? (
+            <div className="dp-table-wrap">
+              <table className="dp-table">
+                <thead><tr><th>Booking</th><th>Occupation</th><th>Exam date</th><th>Booking status</th><th>Payment status</th></tr></thead>
+                <tbody>{reservations.map((item, index) => {
+                  const bookingState = reservationState(item);
+                  const paymentState = dashboardPaymentStatus(item, payments);
+                  return <tr key={`${reservationId(item)}-${index}`}>
+                    <td><strong>#{reservationId(item)}</strong><small>{reservationCenter(item)}</small></td>
+                    <td>{reservationOccupation(item)}</td>
+                    <td>{reservationDate(item) ? formatTimestamp(reservationDate(item)) : "-"}</td>
+                    <td><span className={`dp-badge dp-badge--${bookingState.type}`}>{bookingState.label}</span></td>
+                    <td><span className={`dp-badge dp-badge--${paymentState}`}>{BADGE_LABEL[paymentState]}</span></td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+          ) : null}
         </section>
 
         <section className="dp-panel">

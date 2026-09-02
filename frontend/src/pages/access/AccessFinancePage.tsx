@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CreditCard, LayoutDashboard, LogOut, Megaphone, ShieldCheck, Users, WalletCards } from "lucide-react";
 import { useAccessAuth } from "@/contexts/AccessAuthContext";
 import { accessAdminApi } from "@/lib/access-api";
 import "@/styles/access-dashboard-premium.css";
+import "@/styles/access-admin-analytics.css";
 
 const PERMISSIONS = [
   ["booking.create", "Create bookings", "Allows candidate reservation creation; successful bookings use the Admin-configured credit cost."],
@@ -58,6 +59,7 @@ function errorMessage(error: unknown, fallback = "Request failed") {
 export default function AccessFinancePage() {
   const { user, logout } = useAccessAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<AccountAccess | null>(null);
@@ -67,13 +69,19 @@ export default function AccessFinancePage() {
   const [bookingCreditCost, setBookingCreditCost] = useState("1.00");
   const [paymentSettings, setPaymentSettings] = useState({ bkashEnabled: false, bkashNumber: "", bkashInstructions: "", nagadEnabled: false, nagadNumber: "", nagadInstructions: "" });
   const [savingBookingCost, setSavingBookingCost] = useState(false);
+  const [savingPermissions, setSavingPermissions] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadAccounts() {
     const response = await accessAdminApi<{ accounts: Account[] }>("/accounts");
     const candidates = (response.accounts || []).filter((item) => item.role !== "ADMIN");
     setAccounts(candidates);
-    setSelectedId((current) => current || candidates[0]?.id || "");
+    setSelectedId((current) => {
+      const requestedId = searchParams.get("account");
+      return requestedId && candidates.some((item) => item.id === requestedId)
+        ? requestedId
+        : current || candidates[0]?.id || "";
+    });
   }
   async function loadDeposits() {
     const response = await accessAdminApi<{ deposits: DepositRequest[] }>("/deposits");
@@ -103,9 +111,11 @@ export default function AccessFinancePage() {
   const selected = useMemo(() => accounts.find((item) => item.id === selectedId), [accounts, selectedId]);
 
   async function savePermissions() {
-    setMessage("");
+    if (!selectedId) return;
+    setMessage(""); setSavingPermissions(true);
     try { await accessAdminApi(`/accounts/${selectedId}/access`, { method: "PUT", body: { permissions } }); setMessage("Permissions saved in managed mode."); await loadDetail(selectedId); }
     catch (error: unknown) { setMessage(errorMessage(error)); }
+    finally { setSavingPermissions(false); }
   }
   async function postAdjustment(event: React.FormEvent) {
     event.preventDefault(); setMessage("");
@@ -131,7 +141,7 @@ export default function AccessFinancePage() {
     finally { setSavingBookingCost(false); }
   }
 
-  return <div className="ap-shell"><aside className="ap-sidebar"><div className="ap-brand"><span className="ap-brand__mark">A</span><div><strong>Access</strong><small>ADMIN CONSOLE</small></div></div><nav className="ap-nav"><small>CONTROL</small><Link className="ap-nav__link" to="/access/dashboard"><LayoutDashboard />Dashboard</Link><Link className="ap-nav__link" to="/access/accounts"><Users />Accounts</Link><Link className="ap-nav__link ap-nav__link--active" to="/access/finance"><WalletCards />Permissions & Wallets</Link><Link className="ap-nav__link" to="/access/notice"><Megaphone />Notice</Link></nav><div className="ap-sidebar__foot">Secure ledger · v1</div></aside>
+  return <div className="ap-shell ap-admin-controls"><aside className="ap-sidebar"><div className="ap-brand"><span className="ap-brand__mark">A</span><div><strong>Access</strong><small>ADMIN CONSOLE</small></div></div><nav className="ap-nav"><small>CONTROL</small><Link className="ap-nav__link" to="/access/dashboard"><LayoutDashboard />Dashboard</Link><Link className="ap-nav__link" to="/access/accounts"><Users />User Management</Link><Link className="ap-nav__link" to="/access/users"><Users />Create User</Link><Link className="ap-nav__link ap-nav__link--active" to="/access/finance"><WalletCards />Permissions & Wallets</Link><Link className="ap-nav__link" to="/access/notice"><Megaphone />Notice</Link></nav><div className="ap-sidebar__foot">Secure ledger · v1</div></aside>
     <main className="ap-main"><header className="ap-topbar"><div><small>ACCESS POLICIES</small><strong>Permissions, deposits and credit ledger</strong></div><div className="ap-account"><span className="ap-role ap-role--admin">ADMIN</span><div><strong>{user?.name}</strong><small>{user?.email}</small></div><button onClick={() => { logout(); navigate("/access/login"); }}><LogOut />Logout</button></div></header>
       <section className="af-head"><ShieldCheck /><div><small>SECURITY & FINANCE</small><h1>Account controls</h1><p>Only explicitly enabled capabilities are available to managed accounts.</p></div></section>
       {message && <div className="ap-error af-message">{message}</div>}
@@ -147,7 +157,7 @@ export default function AccessFinancePage() {
       </form></section>
       <section className="af-layout"><article className="ap-panel af-control"><label>Account</label><select value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>{accounts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role} · {item.email}</option>)}</select>
         {selected && <div className="af-account"><strong>{selected.name}</strong><span>{selected.role} · {selected.status} · {detail?.account?.permission_mode || selected.permission_mode || "LEGACY"}</span></div>}
-        <h2>Page & action permissions</h2><div className="af-permissions">{PERMISSIONS.map(([key, label, note]) => <label key={key} className="af-permission"><input type="checkbox" checked={permissions[key] || false} onChange={(e) => setPermissions({ ...permissions, [key]: e.target.checked })}/><span><strong>{label}</strong><small>{note}</small></span></label>)}</div><button className="ap-btn ap-btn--gold" onClick={savePermissions}>Save permissions</button>
+        <h2>Page & action permissions</h2><p className="af-helper">Choose exactly which portal capabilities this account can use. Changes apply in managed mode.</p><div className="af-permissions">{PERMISSIONS.map(([key, label, note]) => <label key={key} className="af-permission"><input type="checkbox" checked={permissions[key] || false} onChange={(e) => setPermissions({ ...permissions, [key]: e.target.checked })}/><span><strong>{label}</strong><small>{note}</small></span></label>)}</div><button className="ap-btn ap-btn--gold" onClick={savePermissions} disabled={savingPermissions || !selectedId}>{savingPermissions ? "Saving permissions…" : "Save permissions"}</button>
         </article>
         <aside className="ap-panel af-wallet"><CreditCard /><small>CURRENT BALANCE</small><strong>{Number(detail?.wallet?.balance || 0).toFixed(2)}</strong><span>{detail?.wallet?.currency || "CREDIT"}</span><form onSubmit={postAdjustment}><h2>Manual adjustment</h2><input type="number" min="0.01" step="0.01" placeholder="Amount" value={adjustment.amount} onChange={(e) => setAdjustment({ ...adjustment, amount: e.target.value })} required/><select value={adjustment.direction} onChange={(e) => setAdjustment({ ...adjustment, direction: e.target.value })}><option value="credit">Credit</option><option value="debit">Debit</option></select><input placeholder="Reason" value={adjustment.description} onChange={(e) => setAdjustment({ ...adjustment, description: e.target.value })}/><button className="ap-btn ap-btn--gold">Post adjustment</button></form></aside></section>
       <section className="ap-panel af-table"><header><div><small>IMMUTABLE CREDIT HISTORY</small><h2>Selected account ledger</h2></div></header><div className="af-rows">{detail?.transactions?.map((item) => <div className="af-row" key={item.id}><div><strong>{item.description || item.transaction_type}</strong><small>{new Date(item.created_at).toLocaleString()} · Balance after {Number(item.balance_after).toFixed(2)}</small></div><b>{item.direction === "credit" ? "+" : "−"}{Number(item.amount).toFixed(2)}</b><span className={`ap-status ap-status--${item.direction === "credit" ? "active" : "inactive"}`}>{item.direction}</span></div>)}{detail && !detail.transactions?.length && <p>No wallet transactions for this account.</p>}</div></section>

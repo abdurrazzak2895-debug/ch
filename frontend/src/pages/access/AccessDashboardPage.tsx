@@ -105,11 +105,11 @@ export default function AccessDashboardPage() {
           <Link className="ap-nav__link ap-nav__link--active" to="/access/dashboard"><LayoutDashboard />Dashboard</Link>
           {isAdmin ? <>
             <small>Access Control</small>
-            <Link className="ap-nav__link" to="/access/accounts"><Users />All Accounts</Link>
+            <Link className="ap-nav__link" to="/access/accounts"><Users />User Management</Link>
+            <Link className="ap-nav__link" to="/access/users"><CircleUserRound />Create User</Link>
             <Link className="ap-nav__link" to="/access/finance"><WalletCards />Permissions & Wallets</Link>
             <Link className="ap-nav__link" to="/access/notice"><Megaphone />Notice</Link>
             <Link className="ap-nav__link" to="/access/agencies"><Building2 />Create Agency</Link>
-            <Link className="ap-nav__link" to="/access/users"><CircleUserRound />Create Users</Link>
             <small>Infrastructure</small>
             <Link className="ap-nav__link" to="/access/session-centers"><Server />Session Centers</Link>
             <Link className="ap-nav__link" to="/access/section-rules"><FileSliders />Section Rules</Link>
@@ -275,6 +275,7 @@ export default function AccessDashboardPage() {
             <h2>Quick Actions</h2>
             {isAdmin && (
               <>
+                <Link to="/access/accounts"><Users />User Management</Link>
                 <Link to="/access/agencies"><Building2 />Create Agency</Link>
                 <Link to="/access/finance"><WalletCards />Permissions & Wallets</Link>
               </>
