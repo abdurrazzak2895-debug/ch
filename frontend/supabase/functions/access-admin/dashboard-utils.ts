@@ -125,6 +125,17 @@ export function buildAgencyDashboard(
       const email = normalizedEmail(user.email);
       const userReservations = reservationsByEmail.get(email) || [];
       const userPayments = paymentsByEmail.get(email) || [];
+      const svpAccounts = svpByEmail.get(email) || [];
+      const completedBookings = userReservations.filter((item) => item.completed).length;
+      const pendingBookings = userReservations.filter((item) => !item.completed).length;
+      const activeReservations = userReservations.filter((item) => {
+        const s = item.status.toLowerCase();
+        return /active|pending|reserved|hold|scheduled|booked/.test(s);
+      });
+      const failedReservations = userReservations.filter((item) => {
+        const s = item.status.toLowerCase();
+        return /fail|error|cancel|expire|reject|void/.test(s);
+      });
       return {
         id: user.id,
         name: user.name,
@@ -132,9 +143,19 @@ export function buildAgencyDashboard(
         phone: user.phone || null,
         status: user.status,
         createdAt: user.created_at || null,
-        svpAccountCount: (svpByEmail.get(email) || []).length,
-        completedBookings: userReservations.filter((item) => item.completed).length,
+        svpAccountCount: svpAccounts.length,
+        svpLogins: svpAccounts.map((s) => s.login),
+        completedBookings,
+        pendingBookings,
+        failedBookings: failedReservations.length,
         paidPayments: userPayments.filter((item) => item.paid).length,
+        totalPayments: userPayments.length,
+        recentReservations: userReservations.slice(-5).map((r) => ({
+          id: r.id,
+          status: r.status,
+          completed: r.completed,
+          createdAt: r.createdAt,
+        })),
       };
     });
     return {
@@ -146,6 +167,8 @@ export function buildAgencyDashboard(
       userCount: agencyUsers.length,
       svpAccountCount: agencyUsers.reduce((sum, item) => sum + item.svpAccountCount, 0),
       completedBookings: agencyUsers.reduce((sum, item) => sum + item.completedBookings, 0),
+      pendingBookings: agencyUsers.reduce((sum, item) => sum + item.pendingBookings, 0),
+      failedBookings: agencyUsers.reduce((sum, item) => sum + item.failedBookings, 0),
       paidPayments: agencyUsers.reduce((sum, item) => sum + item.paidPayments, 0),
       users: agencyUsers,
     };

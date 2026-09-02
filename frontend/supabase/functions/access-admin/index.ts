@@ -263,7 +263,7 @@ serve(async (req) => {
 
     // GET /dashboard — account ownership plus live SVP reservation/payment analytics.
     if (path === "/dashboard" && req.method === "GET") {
-      const [accountsResult, svpUsersResult, sessionsResult] = await Promise.all([
+      const [accountsResult, svpUsersResult, sessionsResult, billingResult] = await Promise.all([
         supabase.from("accounts").select("id,name,email,phone,role,status,agency_id,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_users").select("id,login,email,full_name,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_sessions")
@@ -271,6 +271,10 @@ serve(async (req) => {
           .is("revoked_at", null)
           .not("svp_access_enc", "is", null)
           .order("updated_at", { ascending: false }),
+        supabase.from("access_billing_settings")
+          .select("booking_credit_cost")
+          .eq("singleton", true)
+          .maybeSingle(),
       ]);
       if (accountsResult.error) throw accountsResult.error;
       if (svpUsersResult.error) throw svpUsersResult.error;
@@ -291,6 +295,7 @@ serve(async (req) => {
           return { ...payment, accountName: account?.name || payment.svpLogin, agencyName: agency?.name || null };
         });
       const linkedSvpAccounts = svpUsers.filter((item) => accountByEmail.has(String(item.email || item.login || "").toLowerCase())).length;
+      const bookingCreditCost = Number(billingResult.data?.booking_credit_cost) || 0;
 
       return new Response(JSON.stringify({
         stats: {
@@ -301,6 +306,7 @@ serve(async (req) => {
           linkedSvpAccounts,
           completedBookings: live.reservations.filter((item) => item.completed).length,
           successfulPayments: live.payments.filter((item) => item.paid).length,
+          bookingCreditCost,
         },
         agencies,
         recentPayments,
@@ -312,6 +318,7 @@ serve(async (req) => {
           truncated: live.truncated,
           refreshedAt: new Date().toISOString(),
         },
+        bookingCreditCost,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
