@@ -1,0 +1,56 @@
+name: Refresh t2hub Session
+
+on:
+  schedule:
+    # Run every 6 hours (adjust as needed)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Refresh session
+        env:
+          T2HUB_EMAIL: ${{ secrets.T2HUB_EMAIL }}
+          T2HUB_PASSWORD: ${{ secrets.T2HUB_PASSWORD }}
+          T2HUB_URL: ${{ secrets.T2HUB_URL }}
+        run: node scripts/refresh-t2hub-session.mjs
+
+      - name: Sync session to Supabase
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          node scripts/sync-t2hub-session.mjs --write
+          # Set secrets in Supabase
+          if [ -f .secrets/t2hub-session.env ]; then
+            source .secrets/t2hub-session.env
+            npx supabase secrets set \
+              T2HUB_SESSION_KEY="$T2HUB_SESSION_KEY" \
+              T2HUB_SESSION_COOKIE="$T2HUB_SESSION_COOKIE" \
+              T2HUB_SESSION_CSRF="$T2HUB_SESSION_CSRF" \
+              --project-ref "$SUPABASE_PROJECT_ID"
+          fi
+
+      - name: Upload session artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t2hub-session
+          path: captured/t2hub-session/session.json
+          retention-days: 7

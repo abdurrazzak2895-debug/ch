@@ -50,14 +50,27 @@ for (const [k, v] of Object.entries(envVars)) {
 if (!doWrite) {
   console.log('\nRun with --write to save to .secrets/t2hub-session.env');
   console.log('Then set in Supabase: Dashboard > Edge Functions > Secrets');
+  console.log('Or run: npm run refresh-t2hub-sync (refresh + sync in one command)');
   process.exit(0);
 }
 
 // Write secrets file
-const secretsFile = path.join(ROOT, '.secrets', 't2hub-session.env');
-fs.mkdirSync(path.dirname(secretsFile), { recursive: true });
+const secretsDir = path.join(ROOT, '.secrets');
+fs.mkdirSync(secretsDir, { recursive: true });
+const secretsFile = path.join(secretsDir, 't2hub-session.env');
 const lines = Object.entries(envVars).map(([k, v]) => `${k}=${v}`);
 fs.writeFileSync(secretsFile, lines.join('\n') + '\n');
 console.log(`\nSecrets written to ${secretsFile}`);
-console.log('Set in Supabase via: Dashboard > Edge Functions > Secrets');
-console.log('Or run: powershell -File scripts/set-supabase-secret.ps1');
+
+// Write individual secret files for the PowerShell script
+for (const [k, v] of Object.entries(envVars)) {
+  const secretFile = path.join(secretsDir, `${k.toLowerCase().replace(/_/g, '-')}.txt`);
+  fs.writeFileSync(secretFile, v);
+}
+
+console.log('Set in Supabase via:');
+console.log('  Dashboard > Edge Functions > Secrets');
+console.log('Or run:');
+console.log('  powershell -File scripts/set-supabase-secret.ps1 -Name T2HUB_SESSION_KEY -ValueFile .secrets/t2hub-session-key.txt -ProjectRef <PROJECT_ID>');
+console.log('  powershell -File scripts/set-supabase-secret.ps1 -Name T2HUB_SESSION_COOKIE -ValueFile .secrets/t2hub-session-cookie.txt -ProjectRef <PROJECT_ID>');
+console.log('  powershell -File scripts/set-supabase-secret.ps1 -Name T2HUB_SESSION_CSRF -ValueFile .secrets/t2hub-session-csrf.txt -ProjectRef <PROJECT_ID>');

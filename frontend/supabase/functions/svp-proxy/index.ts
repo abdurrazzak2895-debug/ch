@@ -1,6 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
-import { canFinalizeWalletDebit, getReservationBillingOperation } from "./billing-utils.ts";
+import {
+  canFinalizeWalletDebit,
+  getReservationBillingOperation,
+  getReservationRefundIdempotencyKey,
+  isRefundEligibleReservation,
+} from "./billing-utils.ts";
 import { filterLiveSessionsForCenter, getSessionCenterId } from "./session-center-utils.ts";
 import {
   buildReservationCollectionQuery,
@@ -140,6 +145,81 @@ async function getBookingCreditCost(supabase: ReturnType<typeof getSupabase>, ag
     throw { statusCode: 500, message: "Invalid booking credit cost configuration" };
   }
   return amount;
+}
+
+function extractReservationRows(payload: any): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.exam_reservations)) return payload.exam_reservations;
+  if (Array.isArray(payload?.reservations)) return payload.reservations;
+  if (Array.isArray(payload?.data?.exam_reservations)) return payload.data.exam_reservations;
+  if (Array.isArray(payload?.data?.reservations)) return payload.data.reservations;
+  return payload && typeof payload === "object" ? [payload] : [];
+}
+
+async function reconcileFinalizedReservationRefunds(
+  supabase: ReturnType<typeof getSupabase>,
+  accountId: string,
+  reservationsPayload: any,
+) {
+  const rows = extractReservationRows(reservationsPayload);
+  const results: { reservation_id: string; status: string; action: string; amount?: number }[] = [];
+  const { data: walletRows, error: walletError } = await supabase
+    .from("wallet_transactions")
+    .select("id,amount,direction,transaction_type,reference_id,reference_type,idempotency_key,metadata,created_at")
+    .eq("account_id", accountId)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (walletError) throw walletError;
+
+  for (const row of rows) {
+    const reservationId = String(row?.id || row?.reservation_id || row?.exam_reservation_id || "").trim();
+    if (!reservationId) continue;
+    const status = String(
+      row?.reservation_status || row?.status || row?.state || row?.cbt_exam_status || "",
+    ).toLowerCase();
+    const cancellationTimestamp = row?.cancelled_at || row?.canceled_at || row?.cancellation_date || row?.cancelledAt;
+    if (!isRefundEligibleReservation(status, cancellationTimestamp)) continue;
+
+    const debitTx = (walletRows || []).find((tx: any) =>
+      tx.direction === "debit" &&
+      tx.transaction_type === "booking_debit" &&
+      tx.reference_type === "reservation" &&
+      String(tx.reference_id || "") === reservationId,
+    );
+    if (!debitTx) {
+      results.push({ reservation_id: reservationId, status, action: "no_debit_found" });
+      continue;
+    }
+
+    const refundKey = getReservationRefundIdempotencyKey(accountId, reservationId);
+    const alreadyRefunded = (walletRows || []).find((tx: any) => tx.idempotency_key === refundKey);
+    if (alreadyRefunded) {
+      results.push({ reservation_id: reservationId, status, action: "already_refunded", amount: Number(alreadyRefunded.amount) });
+      continue;
+    }
+
+    const refundAmount = Math.abs(Number(debitTx.amount));
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+      results.push({ reservation_id: reservationId, status, action: "invalid_amount" });
+      continue;
+    }
+
+    const { data: refundTx, error: refundError } = await supabase.rpc("wallet_refund_booking", {
+      p_account_id: accountId,
+      p_reservation_id: reservationId,
+      p_status: status,
+      p_metadata: { source: "svp-proxy", reservation_status: status },
+    });
+    if (refundError) {
+      // A concurrent request may have created the deterministic refund between
+      // the read above and this RPC. Reconciliation remains retryable and does
+      // not hide the failure from the result surface.
+      results.push({ reservation_id: reservationId, status, action: "refund_failed", amount: refundAmount });
+      continue;
+    }
+    results.push({ reservation_id: reservationId, status, action: "refunded", amount: Number(refundTx?.amount || refundAmount) });
+  }
+  return results;
 }
 
 function findReservationId(value: any): string {
@@ -1264,65 +1344,18 @@ Deno.serve(async (req) => {
       return new Response(await upstream.arrayBuffer(), { status: 200, headers });
     }
 
-    // ΓöÇΓöÇΓöÇΓöÇ Auto-verify reservation status & refund credits ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ΓöÇΓöÇ Auto-verify reservation status & refund credits ΓöÇΓöÇ
     if (req.method === "POST" && path === "/auto-verify-reservations") {
       const accessCtx = await requireAccessPermission(req, "booking.create");
-      const supabase = accessCtx.supabase;
-      const accountId = accessCtx.account.id;
-      const FINALIZED_RE = /cancel|expired|attended|completed|no[_\s-]?show|absent|refunded|void/i;
-      const results: { reservation_id: string; status: string; action: string; amount?: number }[] = [];
-
       const reservationsData = await svpFetch("/api/v1/individual_labor_space/exam_reservations?locale=en", {
         method: "GET", token: svpToken,
       });
-      const rows = Array.isArray(reservationsData) ? reservationsData
-        : Array.isArray(reservationsData?.exam_reservations) ? reservationsData.exam_reservations
-          : Array.isArray(reservationsData?.data?.exam_reservations) ? reservationsData.data.exam_reservations
-            : [];
-
-      const { data: walletRows } = await supabase
-        .from("wallet_transactions")
-        .select("id,amount,direction,transaction_type,reference_id,metadata,created_at")
-        .eq("account_id", accountId)
-        .order("created_at", { ascending: false })
-        .limit(500);
-
-      for (const row of rows) {
-        const rid = String(row?.id || row?.reservation_id || row?.exam_reservation_id || "").trim();
-        if (!rid || !/^\d+$/.test(rid)) continue;
-        const status = String(row?.reservation_status || row?.status || row?.cbt_exam_status || "").toLowerCase();
-        if (!FINALIZED_RE.test(status)) continue;
-        const debitTx = (walletRows || []).find((tx: any) =>
-          tx.direction === "debit" &&
-          tx.reference_id === rid &&
-          /booking/i.test(tx.transaction_type || tx.metadata?.operation || "")
-        );
-        if (!debitTx) { results.push({ reservation_id: rid, status, action: "no_debit_found" }); continue; }
-        const alreadyRefunded = (walletRows || []).some((tx: any) =>
-          tx.direction === "credit" &&
-          /refund/i.test(tx.transaction_type || "") &&
-          tx.reference_id === rid
-        );
-        if (alreadyRefunded) { results.push({ reservation_id: rid, status, action: "already_refunded" }); continue; }
-        const refundAmount = Math.abs(Number(debitTx.amount));
-        if (!Number.isFinite(refundAmount) || refundAmount <= 0) { results.push({ reservation_id: rid, status, action: "invalid_amount" }); continue; }
-        const { error: refundErr } = await supabase.rpc("wallet_post_adjustment", {
-          p_account_id: accountId,
-          p_amount: refundAmount,
-          p_direction: "credit",
-          p_transaction_type: "refund",
-          p_idempotency_key: `refund:${rid}:${crypto.randomUUID()}`,
-          p_description: `Auto-refund for finalized reservation #${rid} (status: ${status})`,
-          p_created_by: accountId,
-          p_reference_type: "reservation_refund",
-          p_reference_id: rid,
-          p_metadata: { original_debit_id: debitTx.id, reservation_status: status, auto_verified: true },
-        });
-        if (refundErr) { results.push({ reservation_id: rid, status, action: "refund_failed", amount: refundAmount }); continue; }
-        results.push({ reservation_id: rid, status, action: "refunded", amount: refundAmount });
-      }
-
-      return json({ verified: results.length, results, account_id: accountId });
+      const results = await reconcileFinalizedReservationRefunds(
+        accessCtx.supabase,
+        accessCtx.account.id,
+        reservationsData,
+      );
+      return json({ verified: results.length, results, account_id: accessCtx.account.id });
     }
 
     // ΓöÇΓöÇ Center-bound temporary seat hold ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -1432,7 +1465,9 @@ Deno.serve(async (req) => {
         const reservationLookupId = route.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path)
           ? getReservationLookupId(path, query)
           : "";
+        const isReservationRead = route.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path);
         let data: any;
+        let walletReconciliation: { reservation_id: string; status: string; action: string; amount?: number }[] = [];
         if (route.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path) && reservationLookupId) {
           const collectionPayload = await svpFetch(
             buildPath(svpPath, buildReservationCollectionQuery(query)),
@@ -1453,6 +1488,20 @@ Deno.serve(async (req) => {
             token: svpToken,
             body,
           });
+        }
+        if (isReservationRead && accessContext?.account.permission_mode === "MANAGED") {
+          // Reservation status changes happen upstream, so reconcile on every
+          // normal reservation read. The database RPC is deterministic and
+          // idempotent; a transient wallet error must not hide the booking list.
+          try {
+            walletReconciliation = await reconcileFinalizedReservationRefunds(
+              accessContext.supabase,
+              accessContext.account.id,
+              data,
+            );
+          } catch (reconciliationError) {
+            console.error("automatic reservation refund reconciliation failed", reconciliationError);
+          }
         }
         if (isChargeableBooking && accessContext?.account.permission_mode === "MANAGED") {
           const reservationId = findReservationId(data) ||
@@ -1485,6 +1534,9 @@ Deno.serve(async (req) => {
           if (data && typeof data === "object" && !Array.isArray(data)) {
             return json({ ...data, access_wallet: { charged: bookingCreditCost, balance_after: walletTransaction?.balance_after, transaction_id: walletTransaction?.id } });
           }
+        }
+        if (isReservationRead && data && typeof data === "object" && !Array.isArray(data) && accessContext?.account.permission_mode === "MANAGED") {
+          return json({ ...data, access_wallet: { reconciliation: walletReconciliation } });
         }
         return json(data);
       } catch (error) {
