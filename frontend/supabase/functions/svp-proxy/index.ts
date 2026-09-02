@@ -1532,6 +1532,40 @@ Deno.serve(async (req) => {
             walletTransaction = completedTransaction;
           }
           if (data && typeof data === "object" && !Array.isArray(data)) {
+            // Check if the reservation is already in a finalized (refund-eligible) state
+            const reservationStatus = String(
+              data?.reservation_status || data?.status || data?.state || data?.cbt_exam_status || "",
+            ).toLowerCase();
+            const cancellationTimestamp = data?.cancelled_at || data?.canceled_at || data?.cancellation_date;
+            const isFinalized = isRefundEligibleReservation(reservationStatus, cancellationTimestamp);
+
+            // Auto-refund if booking succeeded but reservation is already finalized
+            if (isFinalized && reservationId && walletTransaction) {
+              try {
+                const refundResult = await accessContext.supabase.rpc("wallet_refund_booking", {
+                  p_account_id: accessContext.account.id,
+                  p_reservation_id: reservationId,
+                  p_status: reservationStatus,
+                  p_metadata: { source: "svp-proxy-auto-refund", operation: billingOperation },
+                });
+                if (!refundResult.error) {
+                  return json({
+                    ...data,
+                    access_wallet: {
+                      charged: bookingCreditCost,
+                      refunded: true,
+                      refund_amount: Number(refundResult.data?.amount || bookingCreditCost),
+                      balance_after: Number(refundResult.data?.balance_after || walletTransaction.balance_after),
+                      transaction_id: walletTransaction.id,
+                      refund_transaction_id: refundResult.data?.id,
+                    },
+                  });
+                }
+              } catch (autoRefundErr) {
+                console.error("auto-refund after booking failed", autoRefundErr);
+              }
+            }
+
             return json({ ...data, access_wallet: { charged: bookingCreditCost, balance_after: walletTransaction?.balance_after, transaction_id: walletTransaction?.id } });
           }
         }
