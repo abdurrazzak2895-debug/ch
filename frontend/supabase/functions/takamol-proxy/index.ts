@@ -138,6 +138,19 @@ Deno.serve(async (req) => {
       if (query.get("category_id") && query.get("city") && query.get("exam_date")) {
         await fetchLive("/fix-search-mode", query, req).catch(() => undefined);
       }
+    } else if (incomingPath === "/api/auth/status") {
+      // Auth status check - return session info from environment
+      const sessionCookie = Deno.env.get("TAKAMOL_SESSION_COOKIE") || "";
+      const xsrfToken = Deno.env.get("TAKAMOL_XSRF_TOKEN") || "";
+      return json({
+        success: true,
+        data: {
+          authenticated: Boolean(sessionCookie),
+          hasCookie: Boolean(sessionCookie),
+          hasXsrf: Boolean(xsrfToken),
+          cookieLength: sessionCookie.length,
+        },
+      });
     }
 
     const result = await fetchLive(path, query, req);
