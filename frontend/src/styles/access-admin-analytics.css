@@ -278,6 +278,61 @@
   color: #14b8a6;
   font-size: 13px;
 }
-.ap-tone--green { color: #10b981; }
-.ap-tone--gold { color: #f59e0b; }
-.ap-tone--red { color: #ef4444; }
+
+/* ── Live clock ────────────────────────────────────────────────── */
+.ap-live-clock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ap-live-clock__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+  animation: ap-pulse 2s ease-in-out infinite;
+}
+@keyframes ap-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .4; }
+}
+
+/* ── Booking list per user ─────────────────────────────────────── */
+.ap-booking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ap-booking-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.ap-booking-id {
+  color: #94a3b8;
+  font-weight: 600;
+}
+.ap-booking-status {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+}
+.ap-booking-item--done .ap-booking-status {
+  background: rgba(16,185,129,.15);
+  color: #10b981;
+}
+.ap-booking-item--pending .ap-booking-status {
+  background: rgba(245,158,11,.15);
+  color: #f59e0b;
+}

@@ -55,6 +55,23 @@ function formatDate(value?: string) {
 }
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
+const CLOCK_INTERVAL_MS = 1_000; // 1 second
+
+function LiveClock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), CLOCK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="ap-live-clock">
+      <span className="ap-live-clock__dot" />
+      {now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}
+      {" "}
+      {now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+    </span>
+  );
+}
 
 export default function AccessDashboardPage() {
   const { user, logout } = useAccessAuth();
@@ -165,6 +182,7 @@ export default function AccessDashboardPage() {
           </div>
           <div className="ap-account">
             <div className="ap-live-controls">
+              <LiveClock />
               <button
                 className={`ap-live-toggle ${autoRefresh ? "ap-live-toggle--on" : ""}`}
                 onClick={() => setAutoRefresh(!autoRefresh)}
@@ -176,11 +194,6 @@ export default function AccessDashboardPage() {
               <button className="ap-refresh-btn" onClick={() => void load(false)} disabled={refreshing} title="Refresh now">
                 <RefreshCw className={refreshing ? "ap-spinning" : ""} />
               </button>
-              {lastRefreshed && (
-                <span className="ap-last-refreshed">
-                  {lastRefreshed.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                </span>
-              )}
             </div>
             <span className={`ap-role ap-role--${isAdmin ? "admin" : "agency"}`}>{user?.role}</span>
             <span className="ap-avatar">{initials(user?.name)}</span>
@@ -258,7 +271,7 @@ export default function AccessDashboardPage() {
                     </summary>
                     <div className="ap-agency-users">
                       <div className="ap-agency-user ap-agency-user--head">
-                        <span>User</span><span>SVP Accounts</span><span>Bookings</span><span>Failed</span><span>Payments</span><span>Balance</span><span>Status</span>
+                        <span>User</span><span>SVP Accounts</span><span>Recent Bookings</span><span>Failed</span><span>Payments</span><span>Balance</span><span>Status</span>
                       </div>
                       {agency.users.map((u) => (
                         <div className="ap-agency-user" key={u.id}>
@@ -272,9 +285,13 @@ export default function AccessDashboardPage() {
                             )) : <small className="ap-muted">No SVP</small>}
                             {(u.svpLogins?.length ?? 0) > 2 && <small className="ap-svp-more">+{(u.svpLogins?.length ?? 0) - 2}</small>}
                           </span>
-                          <span className="ap-booking-stats">
-                            <b className="ap-tone--green">{u.completedBookings}</b>
-                            {u.pendingBookings > 0 && <small className="ap-tone--gold"> {u.pendingBookings}p</small>}
+                          <span className="ap-booking-list">
+                            {u.recentReservations?.length ? u.recentReservations.slice(-3).reverse().map((r) => (
+                              <span key={r.id} className={`ap-booking-item ${r.completed ? "ap-booking-item--done" : "ap-booking-item--pending"}`}>
+                                <small className="ap-booking-id">#{r.id}</small>
+                                <small className="ap-booking-status">{r.completed ? "OK" : r.status.slice(0, 6)}</small>
+                              </span>
+                            )) : <small className="ap-muted">No bookings</small>}
                           </span>
                           <span className="ap-booking-stats">
                             {u.failedBookings > 0 ? <b className="ap-tone--red">{u.failedBookings}</b> : <b>-</b>}
