@@ -19,15 +19,22 @@ interface Account {
   created_at?: string;
 }
 
+interface SvpLoginInfo {
+  login: string;
+  active: boolean;
+  expiresAt: string | null;
+}
+
 interface AdminDashboardData {
-  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; bookingCreditCost: number };
+  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; activeSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; bookingCreditCost: number; totalWalletBalance: number };
   agencies: Array<{
     id: string; name: string; email: string; status: string; createdAt?: string | null;
-    userCount: number; svpAccountCount: number; completedBookings: number; pendingBookings: number; failedBookings: number; paidPayments: number;
+    userCount: number; svpAccountCount: number; activeSvpCount: number; completedBookings: number; pendingBookings: number; failedBookings: number; paidPayments: number; totalWalletBalance: number;
     users: Array<{
       id: string; name: string; email: string; phone?: string | null; status: string; createdAt?: string | null;
-      svpAccountCount: number; svpLogins: string[];
+      svpAccountCount: number; activeSvpCount: number; expiredSvpCount: number; svpLogins: SvpLoginInfo[];
       completedBookings: number; pendingBookings: number; failedBookings: number; paidPayments: number; totalPayments: number;
+      walletBalance: number | null;
       recentReservations: Array<{ id: string; status: string; completed: boolean; createdAt: string | null }>;
     }>;
   }>;
@@ -100,14 +107,15 @@ export default function AccessDashboardPage() {
   const stats = useMemo(() => {
     const active = accounts.filter((item) => item.status === "ACTIVE").length;
     const inactive = accounts.length - active;
-    const bookingCost = adminDashboard?.bookingCreditCost ?? adminDashboard?.stats?.bookingCreditCost ?? 0;
+    const bookingCost = adminDashboard?.bookingCreditCost ?? 0;
+    const totalWallet = adminDashboard?.stats?.totalWalletBalance ?? 0;
     if (isAdmin) return [
       ["Agencies", adminDashboard?.stats.agencies ?? 0, "Agency partners", "gold"],
       ["Users", adminDashboard?.stats.agencyUsers ?? 0, "Users under agencies", "blue"],
-      ["SVP Accounts", adminDashboard?.stats.realSvpAccounts ?? 0, `${adminDashboard?.stats.linkedSvpAccounts ?? 0} linked`, "green"],
+      ["SVP Active", adminDashboard?.stats.activeSvpAccounts ?? 0, `of ${adminDashboard?.stats.realSvpAccounts ?? 0} total`, "green"],
       ["Bookings", adminDashboard?.stats.completedBookings ?? 0, "Completed reservations", "blue"],
-      ["Payments", adminDashboard?.stats.successfulPayments ?? 0, "Successful payments", "green"],
-      ["Per Booking", bookingCost > 0 ? `${bookingCost.toFixed(2)} CR` : "Free", "Credit cost per booking", "gold"],
+      ["Per Booking", bookingCost > 0 ? `${bookingCost.toFixed(2)} CR` : "Free", "Credit cost", "gold"],
+      ["Wallet Pool", totalWallet > 0 ? totalWallet.toFixed(1) : "0", "Total credits", "green"],
     ];
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return [
@@ -242,35 +250,40 @@ export default function AccessDashboardPage() {
                     <summary>
                       <div><strong>{agency.name}</strong><small>{agency.email} - {formatDate(agency.createdAt || undefined)}</small></div>
                       <span><b>{agency.userCount}</b> users</span>
-                      <span><b>{agency.svpAccountCount}</b> SVP</span>
+                      <span><b>{agency.activeSvpCount ?? 0}</b> SVP active</span>
                       <span><b>{agency.completedBookings}</b> booked</span>
                       <span><b>{agency.pendingBookings ?? 0}</b> pending</span>
                       <span><b>{agency.failedBookings ?? 0}</b> failed</span>
+                      <span><b>{(agency.totalWalletBalance ?? 0).toFixed(1)}</b> credits</span>
                     </summary>
                     <div className="ap-agency-users">
                       <div className="ap-agency-user ap-agency-user--head">
-                        <span>User</span><span>SVP Logins</span><span>Bookings</span><span>Pending</span><span>Failed</span><span>Payments</span><span>Status</span>
+                        <span>User</span><span>SVP Accounts</span><span>Bookings</span><span>Failed</span><span>Payments</span><span>Balance</span><span>Status</span>
                       </div>
                       {agency.users.map((u) => (
                         <div className="ap-agency-user" key={u.id}>
                           <span><strong>{u.name}</strong><small>{u.email}{u.phone ? ` · ${u.phone}` : ""}</small></span>
                           <span className="ap-svp-logins">
-                            {u.svpLogins?.length ? u.svpLogins.slice(0, 2).map((login) => (
-                              <small key={login} className="ap-svp-login-badge">{login}</small>
+                            {u.svpLogins?.length ? u.svpLogins.slice(0, 2).map((svp) => (
+                              <small key={svp.login} className={`ap-svp-login-badge ${svp.active ? "ap-svp-login-badge--active" : "ap-svp-login-badge--expired"}`}>
+                                {svp.login}
+                                {svp.expiresAt && <span className="ap-svp-expiry">{new Date(svp.expiresAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span>}
+                              </small>
                             )) : <small className="ap-muted">No SVP</small>}
                             {(u.svpLogins?.length ?? 0) > 2 && <small className="ap-svp-more">+{(u.svpLogins?.length ?? 0) - 2}</small>}
                           </span>
                           <span className="ap-booking-stats">
                             <b className="ap-tone--green">{u.completedBookings}</b>
+                            {u.pendingBookings > 0 && <small className="ap-tone--gold"> {u.pendingBookings}p</small>}
                           </span>
                           <span className="ap-booking-stats">
-                            <b className="ap-tone--gold">{u.pendingBookings ?? 0}</b>
-                          </span>
-                          <span className="ap-booking-stats">
-                            <b className="ap-tone--red">{u.failedBookings ?? 0}</b>
+                            {u.failedBookings > 0 ? <b className="ap-tone--red">{u.failedBookings}</b> : <b>-</b>}
                           </span>
                           <span className="ap-booking-stats">
                             <b>{u.paidPayments}/{u.totalPayments}</b>
+                          </span>
+                          <span className="ap-wallet-balance">
+                            <b>{u.walletBalance != null ? u.walletBalance.toFixed(1) : "-"}</b>
                           </span>
                           <span className={`ap-status ap-status--${u.status === "ACTIVE" ? "active" : "inactive"}`}>{u.status}</span>
                         </div>

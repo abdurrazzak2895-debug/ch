@@ -263,7 +263,7 @@ serve(async (req) => {
 
     // GET /dashboard — account ownership plus live SVP reservation/payment analytics.
     if (path === "/dashboard" && req.method === "GET") {
-      const [accountsResult, svpUsersResult, sessionsResult, billingResult] = await Promise.all([
+      const [accountsResult, svpUsersResult, sessionsResult, billingResult, walletsResult] = await Promise.all([
         supabase.from("accounts").select("id,name,email,phone,role,status,agency_id,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_users").select("id,login,email,full_name,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_sessions")
@@ -275,15 +275,40 @@ serve(async (req) => {
           .select("booking_credit_cost")
           .eq("singleton", true)
           .maybeSingle(),
+        supabase.from("wallets")
+          .select("account_id,balance")
+          .order("account_id"),
       ]);
       if (accountsResult.error) throw accountsResult.error;
       if (svpUsersResult.error) throw svpUsersResult.error;
       if (sessionsResult.error) throw sessionsResult.error;
 
       const accounts = (accountsResult.data || []) as AccountSummary[];
-      const svpUsers = (svpUsersResult.data || []) as SvpIdentity[];
-      const live = await syncSvpDashboard(svpUsers, (sessionsResult.data || []) as DashboardSession[]);
-      const agencies = buildAgencyDashboard(accounts, svpUsers, live.reservations, live.payments);
+      const svpUsersRaw = (svpUsersResult.data || []) as SvpIdentity[];
+      const sessions = (sessionsResult.data || []) as DashboardSession[];
+      const live = await syncSvpDashboard(svpUsersRaw, sessions);
+
+      // Build SVP user map with session info
+      const sessionByUserId = new Map<string, DashboardSession>();
+      for (const s of sessions) {
+        if (s.user_id && !sessionByUserId.has(s.user_id)) {
+          sessionByUserId.set(s.user_id, s);
+        }
+      }
+      const svpUsers: SvpIdentity[] = svpUsersRaw.map((u) => {
+        const session = sessionByUserId.get(u.id);
+        const expiresAt = session?.svp_access_exp || null;
+        const isActive = session ? !session.revoked_at && new Date(expiresAt || 0).getTime() > Date.now() : false;
+        return { ...u, sessionExpiresAt: expiresAt, sessionActive: isActive };
+      });
+
+      // Build wallet balances map
+      const walletBalances = new Map<string, number>();
+      for (const w of (walletsResult.data || [])) {
+        walletBalances.set(w.account_id, Number(w.balance) || 0);
+      }
+
+      const agencies = buildAgencyDashboard(accounts, svpUsers, live.reservations, live.payments, walletBalances);
       const accountByEmail = new Map(accounts.map((item) => [String(item.email || "").toLowerCase(), item]));
       const agencyById = new Map(accounts.filter((item) => item.role === "AGENCY").map((item) => [item.id, item]));
       const recentPayments = [...live.payments]
@@ -295,7 +320,9 @@ serve(async (req) => {
           return { ...payment, accountName: account?.name || payment.svpLogin, agencyName: agency?.name || null };
         });
       const linkedSvpAccounts = svpUsers.filter((item) => accountByEmail.has(String(item.email || item.login || "").toLowerCase())).length;
+      const activeSvpAccounts = svpUsers.filter((item) => item.sessionActive).length;
       const bookingCreditCost = Number(billingResult.data?.booking_credit_cost) || 0;
+      const totalWalletBalance = accounts.reduce((sum, item) => sum + (walletBalances.get(item.id) ?? 0), 0);
 
       return new Response(JSON.stringify({
         stats: {
@@ -303,10 +330,12 @@ serve(async (req) => {
           agencies: accounts.filter((item) => item.role === "AGENCY").length,
           agencyUsers: accounts.filter((item) => item.role === "USER" && item.agency_id).length,
           realSvpAccounts: svpUsers.length,
+          activeSvpAccounts,
           linkedSvpAccounts,
           completedBookings: live.reservations.filter((item) => item.completed).length,
           successfulPayments: live.payments.filter((item) => item.paid).length,
           bookingCreditCost,
+          totalWalletBalance,
         },
         agencies,
         recentPayments,

@@ -15,6 +15,8 @@ export type SvpIdentity = {
   email?: string | null;
   full_name?: string | null;
   created_at?: string | null;
+  sessionExpiresAt?: string | null;
+  sessionActive?: boolean;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -106,6 +108,7 @@ export function buildAgencyDashboard(
   svpUsers: SvpIdentity[],
   reservations: ReturnType<typeof normalizeReservation>[],
   payments: ReturnType<typeof normalizePayment>[],
+  walletBalances?: Map<string, number>,
 ) {
   const svpByEmail = new Map<string, SvpIdentity[]>();
   for (const svpUser of svpUsers) {
@@ -120,6 +123,7 @@ export function buildAgencyDashboard(
 
   const agencies = accounts.filter((item) => item.role === "AGENCY");
   const users = accounts.filter((item) => item.role === "USER");
+  const now = Date.now();
   return agencies.map((agency) => {
     const agencyUsers = users.filter((item) => item.agency_id === agency.id).map((user) => {
       const email = normalizedEmail(user.email);
@@ -136,6 +140,22 @@ export function buildAgencyDashboard(
         const s = item.status.toLowerCase();
         return /fail|error|cancel|expire|reject|void/.test(s);
       });
+      const activeSvpAccounts = svpAccounts.filter((s) => {
+        if (s.sessionActive === false) return false;
+        if (s.sessionExpiresAt) {
+          const exp = new Date(s.sessionExpiresAt).getTime();
+          return exp > now;
+        }
+        return true;
+      });
+      const expiredSvpAccounts = svpAccounts.filter((s) => {
+        if (s.sessionActive === false) return true;
+        if (s.sessionExpiresAt) {
+          const exp = new Date(s.sessionExpiresAt).getTime();
+          return exp <= now;
+        }
+        return false;
+      });
       return {
         id: user.id,
         name: user.name,
@@ -144,12 +164,19 @@ export function buildAgencyDashboard(
         status: user.status,
         createdAt: user.created_at || null,
         svpAccountCount: svpAccounts.length,
-        svpLogins: svpAccounts.map((s) => s.login),
+        activeSvpCount: activeSvpAccounts.length,
+        expiredSvpCount: expiredSvpAccounts.length,
+        svpLogins: svpAccounts.map((s) => ({
+          login: s.login,
+          active: s.sessionActive !== false && (!s.sessionExpiresAt || new Date(s.sessionExpiresAt).getTime() > now),
+          expiresAt: s.sessionExpiresAt || null,
+        })),
         completedBookings,
         pendingBookings,
         failedBookings: failedReservations.length,
         paidPayments: userPayments.filter((item) => item.paid).length,
         totalPayments: userPayments.length,
+        walletBalance: walletBalances?.get(user.id) ?? null,
         recentReservations: userReservations.slice(-5).map((r) => ({
           id: r.id,
           status: r.status,
@@ -166,10 +193,12 @@ export function buildAgencyDashboard(
       createdAt: agency.created_at || null,
       userCount: agencyUsers.length,
       svpAccountCount: agencyUsers.reduce((sum, item) => sum + item.svpAccountCount, 0),
+      activeSvpCount: agencyUsers.reduce((sum, item) => sum + item.activeSvpCount, 0),
       completedBookings: agencyUsers.reduce((sum, item) => sum + item.completedBookings, 0),
       pendingBookings: agencyUsers.reduce((sum, item) => sum + item.pendingBookings, 0),
       failedBookings: agencyUsers.reduce((sum, item) => sum + item.failedBookings, 0),
       paidPayments: agencyUsers.reduce((sum, item) => sum + item.paidPayments, 0),
+      totalWalletBalance: agencyUsers.reduce((sum, item) => sum + (item.walletBalance ?? 0), 0),
       users: agencyUsers,
     };
   });

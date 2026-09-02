@@ -257,3 +257,27 @@
   font-size: 11px;
   padding: 8px 0;
 }
+.ap-svp-login-badge--active {
+  background: rgba(16,185,129,.15) !important;
+  color: #10b981 !important;
+}
+.ap-svp-login-badge--expired {
+  background: rgba(239,68,68,.12) !important;
+  color: #ef4444 !important;
+}
+.ap-svp-expiry {
+  display: block;
+  font-size: 8px;
+  opacity: .7;
+  margin-top: 1px;
+}
+.ap-wallet-balance {
+  text-align: center;
+}
+.ap-wallet-balance b {
+  color: #14b8a6;
+  font-size: 13px;
+}
+.ap-tone--green { color: #10b981; }
+.ap-tone--gold { color: #f59e0b; }
+.ap-tone--red { color: #ef4444; }
