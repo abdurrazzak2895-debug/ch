@@ -42,6 +42,13 @@ describe("SVP proxy reservation wallet billing", () => {
     expect(isRefundEligibleReservation("", "2026-09-01T10:00:00Z")).toBe(true);
   });
 
+  it("does not refund successful finalized reservations", () => {
+    expect(isRefundEligibleReservation("completed")).toBe(false);
+    expect(isRefundEligibleReservation("attended")).toBe(false);
+    expect(isRefundEligibleReservation("completed", "2026-09-01T10:00:00Z")).toBe(false);
+    expect(isRefundEligibleReservation("attended", "2026-09-01T10:00:00Z")).toBe(false);
+  });
+
   it("uses one stable refund key for every retry of the same account and reservation", () => {
     const first = getReservationRefundIdempotencyKey("acct-42", "5312907");
     const retry = getReservationRefundIdempotencyKey("acct-42", 5312907);

@@ -1,6 +1,10 @@
 export type ReservationBillingOperation = "booking" | "reschedule";
 
-const FINALIZED_RESERVATION_STATUS_RE = /cancel|expired|attended|completed|no[_\s-]?show|absent|refunded|void|fail|declin|reject|error/i;
+// A reservation may be immutable/finalized without being refundable. In
+// particular, completed and attended reservations represent a successful
+// booking/exam and must never be credited back to the wallet.
+const NON_REFUNDABLE_RESERVATION_STATUS_RE = /active|pending|reserved|hold|scheduled|booked|confirm|processing|paid|success|complete|attend/i;
+const REFUNDABLE_RESERVATION_STATUS_RE = /cancel|expired|no[_\s-]?show|absent|void|fail|declin|reject|error/i;
 
 export function getReservationBillingOperation(
   method: string,
@@ -23,7 +27,13 @@ export function isRefundEligibleReservation(
   status: string | null | undefined,
   cancellationTimestamp?: string | null,
 ): boolean {
-  return Boolean(String(cancellationTimestamp ?? "").trim()) || FINALIZED_RESERVATION_STATUS_RE.test(String(status ?? ""));
+  const normalizedStatus = String(status ?? "").toLowerCase().trim();
+
+  // Status is authoritative when the upstream API supplies both a status and
+  // a cancellation timestamp. This prevents stale/metadata timestamps from
+  // refunding a reservation that is already completed or attended.
+  if (normalizedStatus && NON_REFUNDABLE_RESERVATION_STATUS_RE.test(normalizedStatus)) return false;
+  return Boolean(String(cancellationTimestamp ?? "").trim()) || REFUNDABLE_RESERVATION_STATUS_RE.test(normalizedStatus);
 }
 
 export function getReservationRefundIdempotencyKey(accountId: string, reservationId: string | number): string {
