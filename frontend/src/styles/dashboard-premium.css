@@ -83,6 +83,14 @@
   border: 1px solid transparent;
   transition: all 0.18s ease;
 }
+.dp-nav-item--button {
+  width: 100%;
+  appearance: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
 .dp-nav-item:hover {
   color: var(--dp-text);
   background: rgba(255, 255, 255, 0.05);
@@ -101,6 +109,7 @@
   opacity: 0.85;
 }
 .dp-nav-item--active .dp-nav-ico { opacity: 1; }
+#booking-status, #wallet-balance, #payment-history, #credit-history, #deposit-requests { scroll-margin-top: 88px; }
 
 .dp-side-foot {
   margin-top: auto;
@@ -323,6 +332,12 @@
   box-shadow: 0 8px 22px rgba(240, 200, 105, 0.28);
 }
 .dp-btn--primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(240, 200, 105, 0.36); background: linear-gradient(135deg, var(--dp-gold) 0%, var(--dp-gold-deep) 100%); }
+.dp-pagination {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-top: 16px; color: var(--dp-muted); font-size: 12px;
+}
+.dp-pagination > div { display: flex; align-items: center; gap: 10px; }
+.dp-page-count { min-width: 92px; text-align: center; color: var(--dp-text); font-weight: 700; }
 
 .dp-table-wrap {
   overflow-x: auto;
@@ -485,4 +500,6 @@
   .dp-deposit-form { grid-template-columns: 1fr; }
   .dp-deposit-form .dp-btn { grid-column: auto; }
   .dp-deposit-box { padding: 16px; }
+  .dp-pagination { align-items: flex-start; flex-direction: column; }
+  .dp-pagination > div { width: 100%; justify-content: space-between; }
 }

@@ -174,6 +174,7 @@ export default function DashboardPage() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [paymentPage, setPaymentPage] = useState(0);
   const [paymentsSource, setPaymentsSource] = useState<string>("");
   const [reservations, setReservations] = useState<any[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(true);
@@ -207,6 +208,7 @@ export default function DashboardPage() {
       const { records, source } = await fetchPaymentHistory();
       setPayments(records);
       setPaymentsSource(source);
+      setPaymentPage(0);
     } catch (err: any) {
       setPayments([]);
       setPaymentsError(err?.message || "Failed to load payment history");
@@ -281,7 +283,17 @@ export default function DashboardPage() {
     }
   }
 
+  function openDashboardSection(sectionId: string) {
+    setMenuOpen(false);
+    window.requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   const summary = summarizePayments(payments);
+  const paymentPageSize = 4;
+  const paymentPageCount = Math.max(1, Math.ceil(payments.length / paymentPageSize));
+  const visiblePayments = payments.slice(paymentPage * paymentPageSize, (paymentPage + 1) * paymentPageSize);
   const account = walletData?.account || accessUser;
   const selectedDepositMethod = walletData?.billingSettings?.payment_methods?.find((item) => item.code === depositForm.paymentMethod);
   const displayName = account?.name || me?.name || me?.login || "User";
@@ -306,21 +318,27 @@ export default function DashboardPage() {
             <span className="dp-nav-ico">◈</span> Account Dashboard
           </Link>
 
-          <div className="dp-nav-label" style={{ marginTop: 12 }}>Exams</div>
-          {hasPermission("reservation.manage") && <Link className="dp-nav-item" to="/exam/reservations" onClick={() => setMenuOpen(false)}>
-            <span className="dp-nav-ico">☰</span> My bookings
-          </Link>}
-          <Link className="dp-nav-item" to="/exam/booking" onClick={() => setMenuOpen(false)}>
-            <span className="dp-nav-ico">+</span> New booking
-          </Link>
-          <Link className="dp-nav-item" to="/wallet" onClick={() => setMenuOpen(false)}>
-            <span className="dp-nav-ico">¤</span> Wallet & credits
-          </Link>
+          <div className="dp-nav-label" style={{ marginTop: 12 }}>Dashboard sections</div>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("booking-status")}>
+            <span className="dp-nav-ico">▣</span> Booking status
+          </button>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("payment-history")}>
+            <span className="dp-nav-ico">▤</span> Payment history
+          </button>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("wallet-balance")}>
+            <span className="dp-nav-ico">¤</span> Wallet balance
+          </button>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("credit-history")}>
+            <span className="dp-nav-ico">↕</span> Credit/debit history
+          </button>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("deposit-requests")}>
+            <span className="dp-nav-ico">＋</span> Deposit requests
+          </button>
         </nav>
 
         <div className="dp-side-foot">
-          <strong>Need a hand?</strong>
-          Every payment attempt is tracked below. Failed or pending payments can be retried from the booking page.
+          <strong>Everything in one place</strong>
+          Your bookings, payment history, wallet balance and credit activity are available below on this dashboard.
         </div>
       </aside>
 
@@ -454,7 +472,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <section className="dp-panel dp-bookings-panel">
+        <section className="dp-panel dp-bookings-panel" id="booking-status">
           <div className="dp-panel-head">
             <div><h2>Booking status</h2><span className="dp-sub">Every reservation is listed with its current booking and payment outcome.</span></div>
             <div style={{ display: "flex", gap: "10px" }}><button className="dp-btn" type="button" onClick={loadReservations} disabled={reservationsLoading}>{reservationsLoading ? "Refreshing…" : "↻ Refresh"}</button><Link className="dp-btn" to="/exam/reservations">Open My bookings →</Link></div>
@@ -481,7 +499,7 @@ export default function DashboardPage() {
           ) : null}
         </section>
 
-        <section className="dp-panel">
+        <section className="dp-panel" id="wallet-balance">
           <div className="dp-panel-head">
             <div><h2>Wallet & credit history</h2><span className="dp-sub">Your live balance, deposits, manual credits and booking debits.</span></div>
             <div style={{ display: "flex", gap: "10px" }}><button className="dp-btn" type="button" onClick={loadWallet} disabled={walletLoading}>{walletLoading ? "Refreshing…" : "↻ Refresh"}</button><Link className="dp-btn" to="/wallet">Open wallet →</Link></div>
@@ -517,20 +535,20 @@ export default function DashboardPage() {
             {depositError && <div className="dp-error dp-form-message">{depositError}</div>}
           </div>
 
-          <h3 style={{ margin: "0 0 10px", fontSize: "15px" }}>Recent credit & debit history</h3>
+          <h3 id="credit-history" style={{ margin: "0 0 10px", fontSize: "15px" }}>Recent credit & debit history</h3>
           <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Description</th><th>Date</th><th>Type</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
             {walletData?.transactions?.slice(0, 8).map((item) => <tr key={item.id}><td>{item.description || item.transaction_type}</td><td>{formatTimestamp(item.created_at)}</td><td><span className={`dp-badge dp-badge--${item.direction === "credit" ? "success" : "failed"}`}>{item.direction}</span></td><td style={{ color: item.direction === "credit" ? "var(--dp-green)" : "var(--dp-red)", fontWeight: 800 }}>{item.direction === "credit" ? "+" : "−"}{Number(item.amount).toFixed(2)}</td><td>{Number(item.balance_after).toFixed(2)}</td></tr>)}
             {!walletLoading && !walletData?.transactions?.length && <tr><td colSpan={5}>No credit or debit history yet.</td></tr>}
           </tbody></table></div>
 
-          <h3 style={{ margin: "20px 0 10px", fontSize: "15px" }}>Recent deposits</h3>
+          <h3 id="deposit-requests" style={{ margin: "20px 0 10px", fontSize: "15px" }}>Recent deposits</h3>
           <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Method</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>
             {walletData?.deposits?.slice(0, 5).map((item) => <tr key={item.id}><td>{item.payment_method}</td><td>{formatTimestamp(item.created_at)}</td><td>{Number(item.amount).toFixed(2)}</td><td><span className={`dp-badge dp-badge--${item.status === "APPROVED" ? "success" : item.status === "REJECTED" ? "failed" : "pending"}`}>{item.status}</span></td></tr>)}
             {!walletLoading && !walletData?.deposits?.length && <tr><td colSpan={4}>No deposit requests yet.</td></tr>}
           </tbody></table></div>
         </section>
 
-        <section className="dp-panel">
+        <section className="dp-panel" id="payment-history">
           <div className="dp-panel-head">
             <div>
               <h2>Payment History</h2>
@@ -565,7 +583,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {payments.map((p, idx) => (
+                  {visiblePayments.map((p, idx) => (
                     <tr key={`${p.paymentId}-${p.reservationId}-${idx}`}>
                       <td>{p.paymentId}</td>
                       <td>#{p.reservationId}</td>
@@ -578,6 +596,16 @@ export default function DashboardPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : null}
+          {!paymentsLoading && payments.length > paymentPageSize ? (
+            <div className="dp-pagination" aria-label="Payment history pagination">
+              <span>Showing {paymentPage * paymentPageSize + 1}–{Math.min((paymentPage + 1) * paymentPageSize, payments.length)} of {payments.length}</span>
+              <div>
+                <button className="dp-btn" type="button" onClick={() => setPaymentPage((page) => Math.max(0, page - 1))} disabled={paymentPage === 0}>Previous</button>
+                <span className="dp-page-count">Page {paymentPage + 1} of {paymentPageCount}</span>
+                <button className="dp-btn" type="button" onClick={() => setPaymentPage((page) => Math.min(paymentPageCount - 1, page + 1))} disabled={paymentPage >= paymentPageCount - 1}>Next</button>
+              </div>
             </div>
           ) : null}
           <p className="dp-note">Need to complete a failed or pending payment? Open the Booking page — a retry banner appears there automatically.</p>
