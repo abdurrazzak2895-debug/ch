@@ -9,6 +9,7 @@ import {
 import { filterLiveSessionsForCenter, getSessionCenterId } from "./session-center-utils.ts";
 import {
   buildReservationCollectionQuery,
+  extractReservationRows,
   filterReservationRows,
   getReservationLookupId,
   reshapeReservationPayload,
@@ -145,15 +146,6 @@ async function getBookingCreditCost(supabase: ReturnType<typeof getSupabase>, ag
     throw { statusCode: 500, message: "Invalid booking credit cost configuration" };
   }
   return amount;
-}
-
-function extractReservationRows(payload: any): any[] {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.exam_reservations)) return payload.exam_reservations;
-  if (Array.isArray(payload?.reservations)) return payload.reservations;
-  if (Array.isArray(payload?.data?.exam_reservations)) return payload.data.exam_reservations;
-  if (Array.isArray(payload?.data?.reservations)) return payload.data.reservations;
-  return payload && typeof payload === "object" ? [payload] : [];
 }
 
 async function reconcileFinalizedReservationRefunds(
