@@ -46,6 +46,7 @@ export function loadSession() {
 
 export async function login({ interactive = false } = {}) {
   const env = loadEnv();
+  const previousSession = loadSession();
   const email = env.T2HUB_EMAIL;
   const password = env.T2HUB_PASSWORD;
   const loginUrl = env.T2HUB_LOGIN_URL || env.T2HUB_URL || 'https://takamol.t2hub.app/takamol/agent/login';
@@ -87,13 +88,36 @@ export async function login({ interactive = false } = {}) {
     await page.waitForTimeout(5000);
 
     const cookies = await context.cookies();
-    const encryptionKey = await page.evaluate(() => {
+    let encryptionKey = await page.evaluate(() => {
       try {
         return window.__sk || null;
       } catch {
         return null;
       }
     }).catch(() => null);
+
+    if (!encryptionKey) {
+      for (const url of ['https://t2hub.app/takamol/', 'https://takamol.t2hub.app/']) {
+        try {
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await page.waitForTimeout(2000);
+          encryptionKey = await page.evaluate(() => {
+            try {
+              return window.__sk || null;
+            } catch {
+              return null;
+            }
+          }).catch(() => null);
+          if (encryptionKey) break;
+        } catch {}
+      }
+    }
+
+    // Some T2Hub responses omit window.__sk after login. Keep the last
+    // known key rather than overwriting a working key with an empty value.
+    if (!encryptionKey && previousSession?.encryptionKey) {
+      encryptionKey = previousSession.encryptionKey;
+    }
 
     const session = {
       cookies,

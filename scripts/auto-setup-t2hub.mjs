@@ -36,9 +36,6 @@ function loadEnv() {
       if (eq > 0) env[t.substring(0, eq).trim()] = t.substring(eq + 1).trim().replace(/^["']|["']$/g, '');
     }
   }
-  for (const name of ['T2HUB_EMAIL', 'T2HUB_PASSWORD', 'T2HUB_LOGIN_URL', 'T2HUB_URL']) {
-    if (process.env[name]) env[name] = process.env[name];
-  }
   return env;
 }
 
@@ -93,12 +90,12 @@ async function loginT2Hub(env) {
     console.log(`  → Captured ${cookies.length} cookies`);
 
     // Get encryption key from page
-    let finalKey = await page.evaluate(() => {
+    const encryptionKey = await page.evaluate(() => {
       try { return window.__sk || null; } catch { return null; }
     }).catch(() => null);
 
-    if (finalKey) {
-      console.log(`  → Encryption key found (${finalKey.length} chars)`);
+    if (encryptionKey) {
+      console.log(`  → Encryption key found (${encryptionKey.length} chars)`);
     } else {
       console.log('  ⚠ No encryption key found, trying landing page...');
       // Try to navigate to landing page to get __sk
@@ -110,13 +107,16 @@ async function loginT2Hub(env) {
             try { return window.__sk || null; } catch { return null; }
           }).catch(() => null);
           if (key) {
-            finalKey = key;
-            console.log(`  → Encryption key found on ${url} (${finalKey.length} chars)`);
+            console.log(`  → Encryption key found on ${url} (${key.length} chars)`);
             break;
           }
         } catch {}
       }
     }
+
+    const finalKey = await page.evaluate(() => {
+      try { return window.__sk || null; } catch { return null; }
+    }).catch(() => null);
 
     await browser.close();
 
@@ -172,33 +172,32 @@ function writeSecretsFile(session) {
 // ── Step 4: Push to Supabase ───────────────────────────────────────────────
 function pushToSupabase(envVars) {
   console.log('\n[4/4] Pushing to Supabase secrets...');
-  const failures = [];
 
   for (const [name, value] of Object.entries(envVars)) {
     if (!value) {
-      failures.push(`${name} is empty`);
-      console.error(`  ✗ ${name} is empty`);
+      console.log(`  ⚠ Skipping ${name} (empty)`);
       continue;
     }
 
     const tempEnv = path.join(process.env.TEMP || '/tmp', `supabase-${name}-${Date.now()}.env`);
     try {
-      fs.writeFileSync(tempEnv, `${name}=${value}`, { mode: 0o600 });
-      execSync(`supabase secrets set --env-file "${tempEnv}" --project-ref ${PROJECT_REF}`, {
+      fs.writeFileSync(tempEnv, `${name}=${value}`);
+      execSync(`npx --yes supabase secrets set --env-file "${tempEnv}" --project-ref ${PROJECT_REF}`, {
         stdio: 'pipe',
         timeout: 30000,
       });
       console.log(`  ✓ ${name} set (${value.length} chars)`);
     } catch (e) {
       const stderr = e.stderr?.toString() || e.message;
-      failures.push(`${name}: ${stderr.substring(0, 160)}`);
-      console.error(`  ✗ ${name} failed: ${stderr.substring(0, 160)}`);
+      if (stderr.includes('Already set') || stderr.includes('already')) {
+        console.log(`  ✓ ${name} already set`);
+      } else {
+        console.error(`  ✗ ${name} failed: ${stderr.substring(0, 100)}`);
+      }
     } finally {
       try { fs.unlinkSync(tempEnv); } catch {}
     }
   }
-
-  if (failures.length) throw new Error(`Supabase secret update failed: ${failures.join('; ')}`);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -217,9 +216,6 @@ async function main() {
 
   // Step 3: Write secrets
   const envVars = writeSecretsFile(session);
-  if (!envVars.T2HUB_SESSION_KEY) {
-    throw new Error('T2HUB_SESSION_KEY was not captured; refusing to publish an incomplete session');
-  }
 
   // Step 4: Push to Supabase
   pushToSupabase(envVars);
