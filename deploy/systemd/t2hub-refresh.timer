@@ -1,0 +1,11 @@
+[Unit]
+Description=Run T2Hub session refresh every two hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=2h
+Persistent=true
+Unit=t2hub-refresh.service
+
+[Install]
+WantedBy=timers.target

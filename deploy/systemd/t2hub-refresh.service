@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh T2Hub session and sync Supabase secrets
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/choyes
+Environment="HOME=/home/ubuntu"
+Environment="PATH=/home/ubuntu/.nvm/versions/node/v22.13.0/bin:/home/ubuntu/bin:/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/ubuntu/choyes/scripts/run-t2hub-refresh-and-sync.sh
