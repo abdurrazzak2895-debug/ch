@@ -182,7 +182,7 @@ function pushToSupabase(envVars) {
     const tempEnv = path.join(process.env.TEMP || '/tmp', `supabase-${name}-${Date.now()}.env`);
     try {
       fs.writeFileSync(tempEnv, `${name}=${value}`);
-      execSync(`supabase secrets set --env-file "${tempEnv}" --project-ref ${PROJECT_REF}`, {
+      execSync(`npx --yes supabase secrets set --env-file "${tempEnv}" --project-ref ${PROJECT_REF}`, {
         stdio: 'pipe',
         timeout: 30000,
       });
