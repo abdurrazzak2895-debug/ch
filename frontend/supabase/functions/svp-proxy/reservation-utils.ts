@@ -44,7 +44,19 @@ export function extractReservationRows(payload: any): any[] {
     payload?.data?.reservations,
     payload?.items,
     payload?.results,
+    payload?.payload,
     payload?.data,
+    payload?.result,
+    payload?.data?.items,
+    payload?.data?.results,
+    payload?.data?.payload,
+    payload?.data?.result,
+    payload?.result?.items,
+    payload?.result?.exam_reservations,
+    payload?.result?.reservations,
+    payload?.payload?.items,
+    payload?.payload?.exam_reservations,
+    payload?.payload?.reservations,
   ];
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) return candidate;

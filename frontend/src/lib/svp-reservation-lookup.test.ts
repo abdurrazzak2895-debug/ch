@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReservationCollectionQuery,
+  extractReservationRows,
   filterReservationRows,
   getReservationLookupId,
   reshapeReservationPayload,
@@ -36,6 +37,12 @@ describe("SVP reservation lookup filtering", () => {
 
   it("returns no match instead of treating an unrelated record as the requested ID", () => {
     expect(filterReservationRows({ exam_reservations: [oldReservation] }, "5312907")).toEqual([]);
+  });
+
+  it("extracts reservations from frontend-compatible result and payload wrappers", () => {
+    const reservation = { reservation_id: "5312907", reservation_status: "completed" };
+    expect(extractReservationRows({ payload: [reservation] })).toEqual([reservation]);
+    expect(extractReservationRows({ data: { result: [reservation] } })).toEqual([reservation]);
   });
 
   it("removes local ID filters before the upstream collection request", () => {
