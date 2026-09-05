@@ -340,9 +340,9 @@ export default function DashboardPage() {
             <div><h2>SVP Login</h2><span className="dp-sub">Your SVP platform credentials and session details.</span></div>
           </div>
           <div className="dp-account-grid">
-            <div><span>SVP Login</span><strong>{me?.login || "Loading…"}</strong></div>
-            <div><span>Full name</span><strong>{me?.name || "Not available"}</strong></div>
-            <div><span>Role</span><strong>{me?.role || "Labor"}</strong></div>
+            <div><span>SVP Login</span><strong>{account?.email || me?.login || "Not available"}</strong></div>
+            <div><span>Full name</span><strong>{account?.name || "Not available"}</strong></div>
+            <div><span>Role</span><strong>{account?.role || me?.role || "Labor"}</strong></div>
             <div><span>Session status</span><strong className="dp-account-id">{loading ? "Checking…" : "Active"}</strong></div>
           </div>
         </section>
