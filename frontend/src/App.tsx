@@ -16,6 +16,7 @@ import BookingPage from "@/pages/exam/BookingPage";
 import PaymentPage from "@/pages/exam/PaymentPage";
 import PaymentResultPage from "@/pages/exam/PaymentResultPage";
 import ReservationsPage from "@/pages/exam/ReservationsPage";
+import PaymentHistoryPage from "@/pages/exam/PaymentHistoryPage";
 import ExamSessionListPage from "@/pages/exam/ExamSessionListPage";
 import ExamSessionDetailPage from "@/pages/exam/ExamSessionDetailPage";
 import AccessLoginPage from "@/pages/access/AccessLoginPage";
@@ -69,6 +70,7 @@ const App = () => (
               <Route path="/exam/payment" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/payment/result" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="payment.create"><ProtectedRoute><PaymentResultPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/reservations" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ReservationsPage /></ProtectedRoute></AccessProtectedRoute>} />
+              <Route path="/exam/payments" element={<AccessProtectedRoute allowedRoles={["USER"]}><ProtectedRoute><PaymentHistoryPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/sessions" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ExamSessionListPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/exam/sessions/:id" element={<AccessProtectedRoute allowedRoles={["USER"]} requiredPermission="reservation.manage"><ProtectedRoute><ExamSessionDetailPage /></ProtectedRoute></AccessProtectedRoute>} />
               <Route path="/wallet" element={<AccessProtectedRoute allowedRoles={["USER"]}><ProtectedRoute><WalletPage /></ProtectedRoute></AccessProtectedRoute>} />
