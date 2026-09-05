@@ -173,14 +173,7 @@ export default function DashboardPage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [paymentPage, setPaymentPage] = useState(0);
-  const [paymentsSource, setPaymentsSource] = useState<string>("");
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [reservationsLoading, setReservationsLoading] = useState(true);
-  const [reservationsError, setReservationsError] = useState("");
-  const [paymentsLoading, setPaymentsLoading] = useState(true);
-  const [paymentsError, setPaymentsError] = useState("");
+
   const [walletData, setWalletData] = useState<DashboardWalletData | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState("");
@@ -191,41 +184,9 @@ export default function DashboardPage() {
     const payload = decodeJwtPayload(accessToken);
     setMe(payload ? { login: payload.login || "User", name: payload.name, role: payload.role } : { login: "User" });
     setLoading(false);
-    void loadPayments();
-    void loadReservations();
     void loadWallet();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
-
-  async function loadPayments() {
-    setPaymentsLoading(true);
-    setPaymentsError("");
-    try {
-      const { records, source } = await fetchPaymentHistory();
-      setPayments(records);
-      setPaymentsSource(source);
-      setPaymentPage(0);
-    } catch (err: any) {
-      setPayments([]);
-      setPaymentsError(err?.message || "Failed to load payment history");
-    } finally {
-      setPaymentsLoading(false);
-    }
-  }
-
-  async function loadReservations() {
-    setReservationsLoading(true);
-    setReservationsError("");
-    try {
-      const data = await api("/exam-reservations?locale=en");
-      setReservations(pickReservationArray(data).slice(0, 8));
-    } catch (err: any) {
-      setReservations([]);
-      setReservationsError(err?.message || "Failed to load booking status");
-    } finally {
-      setReservationsLoading(false);
-    }
-  }
 
   async function loadWallet() {
     setWalletLoading(true);
@@ -262,10 +223,6 @@ export default function DashboardPage() {
     });
   }
 
-  const summary = summarizePayments(payments);
-  const paymentPageSize = 4;
-  const paymentPageCount = Math.max(1, Math.ceil(payments.length / paymentPageSize));
-  const visiblePayments = payments.slice(paymentPage * paymentPageSize, (paymentPage + 1) * paymentPageSize);
   const account = walletData?.account || accessUser;
   const displayName = account?.name || me?.name || me?.login || "User";
   const initials = useMemo(() => initialsFrom(displayName), [displayName]);
@@ -293,12 +250,12 @@ export default function DashboardPage() {
           <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("svp-login")}>
             <span className="dp-nav-ico">✦</span> SVP Login
           </button>
-          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("booking-status")}>
+          <Link className="dp-nav-item" to="/exam/reservations" onClick={() => setMenuOpen(false)}>
             <span className="dp-nav-ico">▣</span> Booking status
-          </button>
-          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("payment-history")}>
+          </Link>
+          <Link className="dp-nav-item" to="/exam/payments" onClick={() => setMenuOpen(false)}>
             <span className="dp-nav-ico">▤</span> Payment history
-          </button>
+          </Link>
           <Link className="dp-nav-item" to="/wallet" onClick={() => setMenuOpen(false)}>
             <span className="dp-nav-ico">＋</span> Deposit requests
           </Link>
@@ -347,27 +304,6 @@ export default function DashboardPage() {
                 {hasPermission("reservation.manage") && <Link className="dp-hero-cta dp-hero-cta--ghost" to="/exam/reservations">View bookings</Link>}
               </div>
             </div>
-            <div className="dp-hero-aside">
-              <div className="dp-hero-aside-title">Snapshot</div>
-              <div className="dp-hero-mini-stats">
-                <div className="dp-hero-mini-stat">
-                  <span>Total payments</span>
-                  <strong>{paymentsLoading ? "…" : summary.total}</strong>
-                </div>
-                <div className="dp-hero-mini-stat">
-                  <span>Successful</span>
-                  <strong style={{ color: "var(--dp-green)" }}>{paymentsLoading ? "…" : summary.success}</strong>
-                </div>
-                <div className="dp-hero-mini-stat">
-                  <span>Pending</span>
-                  <strong style={{ color: "var(--dp-amber)" }}>{paymentsLoading ? "…" : summary.pending}</strong>
-                </div>
-                <div className="dp-hero-mini-stat">
-                  <span>Failed</span>
-                  <strong style={{ color: "var(--dp-red)" }}>{paymentsLoading ? "…" : summary.failed}</strong>
-                </div>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -397,34 +333,6 @@ export default function DashboardPage() {
             <span className="dp-stat-label">Available credits</span>
             <strong>{walletLoading ? "…" : Number(walletData?.wallet?.balance || 0).toFixed(2)}</strong>
           </div>
-          <div className="dp-stat dp-stat--gold">
-            <div className="dp-stat-head">
-              <div className="dp-stat-ico">◈</div>
-            </div>
-            <span className="dp-stat-label">Total payments</span>
-            <strong>{paymentsLoading ? "…" : summary.total}</strong>
-          </div>
-          <div className="dp-stat dp-stat--green">
-            <div className="dp-stat-head">
-              <div className="dp-stat-ico">✓</div>
-            </div>
-            <span className="dp-stat-label">Successful</span>
-            <strong>{paymentsLoading ? "…" : summary.success}</strong>
-          </div>
-          <div className="dp-stat dp-stat--red">
-            <div className="dp-stat-head">
-              <div className="dp-stat-ico">×</div>
-            </div>
-            <span className="dp-stat-label">Failed</span>
-            <strong>{paymentsLoading ? "…" : summary.failed}</strong>
-          </div>
-          <div className="dp-stat dp-stat--amber">
-            <div className="dp-stat-head">
-              <div className="dp-stat-ico">⌛</div>
-            </div>
-            <span className="dp-stat-label">Pending</span>
-            <strong>{paymentsLoading ? "…" : summary.pending}</strong>
-          </div>
         </section>
 
         <section className="dp-panel" id="svp-login">
@@ -437,98 +345,6 @@ export default function DashboardPage() {
             <div><span>Role</span><strong>{me?.role || "Labor"}</strong></div>
             <div><span>Session status</span><strong className="dp-account-id">{loading ? "Checking…" : "Active"}</strong></div>
           </div>
-        </section>
-
-        <section className="dp-panel dp-bookings-panel" id="booking-status">
-          <div className="dp-panel-head">
-            <div><h2>Booking status</h2><span className="dp-sub">Every reservation is listed with its current booking and payment outcome.</span></div>
-            <div style={{ display: "flex", gap: "10px" }}><button className="dp-btn" type="button" onClick={loadReservations} disabled={reservationsLoading}>{reservationsLoading ? "Refreshing…" : "↻ Refresh"}</button><Link className="dp-btn" to="/exam/reservations">Open My bookings →</Link></div>
-          </div>
-          {reservationsError && <div className="dp-error">{reservationsError}</div>}
-          {reservationsLoading ? <div className="dp-empty">Loading booking status…</div> : !reservations.length && !reservationsError ? <div className="dp-empty">No bookings found yet. Completed and failed attempts will appear here.</div> : null}
-          {!reservationsLoading && reservations.length ? (
-            <div className="dp-table-wrap">
-              <table className="dp-table">
-                <thead><tr><th>Booking</th><th>Occupation</th><th>Exam date</th><th>Booking status</th><th>Payment status</th></tr></thead>
-                <tbody>{reservations.map((item, index) => {
-                  const bookingState = reservationState(item);
-                  const paymentState = dashboardPaymentStatus(item, payments);
-                  return <tr key={`${reservationId(item)}-${index}`}>
-                    <td><strong>#{reservationId(item)}</strong><small>{reservationCenter(item)}</small></td>
-                    <td>{reservationOccupation(item)}</td>
-                    <td>{reservationDate(item) ? formatTimestamp(reservationDate(item)) : "-"}</td>
-                    <td><span className={`dp-badge dp-badge--${bookingState.type}`}>{bookingState.label}</span></td>
-                    <td><span className={`dp-badge dp-badge--${paymentState}`}>{BADGE_LABEL[paymentState]}</span></td>
-                  </tr>;
-                })}</tbody>
-              </table>
-            </div>
-          ) : null}
-        </section>
-
-
-
-        <section className="dp-panel" id="payment-history">
-          <div className="dp-panel-head">
-            <div>
-              <h2>Payment History</h2>
-              <span className="dp-sub">
-                Every payment attempt — successful, failed and pending.
-                {paymentsSource === "reservation-embedded" ? " (derived from your reservations)" : ""}
-              </span>
-            </div>
-            <button className="dp-btn" type="button" onClick={loadPayments} disabled={paymentsLoading}>
-              {paymentsLoading ? "Refreshing…" : "↻ Refresh"}
-            </button>
-          </div>
-
-          {paymentsError ? <div className="dp-error">{paymentsError}</div> : null}
-          {paymentsLoading ? <div className="dp-empty">Loading payment history…</div> : null}
-          {!paymentsLoading && !payments.length && !paymentsError ? (
-            <div className="dp-empty">No payment attempts found yet. They will appear here after your first booking payment.</div>
-          ) : null}
-
-          {!paymentsLoading && payments.length ? (
-            <div className="dp-table-wrap">
-              <table className="dp-table">
-                <thead>
-                  <tr>
-                    <th>Payment ID</th>
-                    <th>Reservation</th>
-                    <th>Occupation</th>
-                    <th>Date &amp; time</th>
-                    <th>Amount</th>
-                    <th>Method</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visiblePayments.map((p, idx) => (
-                    <tr key={`${p.paymentId}-${p.reservationId}-${idx}`}>
-                      <td>{p.paymentId}</td>
-                      <td>#{p.reservationId}</td>
-                      <td>{p.occupation}</td>
-                      <td>{formatTimestamp(p.createdAt)}</td>
-                      <td>{p.amount === "-" ? "-" : `${p.amount} ${p.currency}`}</td>
-                      <td>{p.method}</td>
-                      <td><span className={`dp-badge dp-badge--${p.status}`}>{BADGE_LABEL[p.status]}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-          {!paymentsLoading && payments.length > paymentPageSize ? (
-            <div className="dp-pagination" aria-label="Payment history pagination">
-              <span>Showing {paymentPage * paymentPageSize + 1}–{Math.min((paymentPage + 1) * paymentPageSize, payments.length)} of {payments.length}</span>
-              <div>
-                <button className="dp-btn" type="button" onClick={() => setPaymentPage((page) => Math.max(0, page - 1))} disabled={paymentPage === 0}>Previous</button>
-                <span className="dp-page-count">Page {paymentPage + 1} of {paymentPageCount}</span>
-                <button className="dp-btn" type="button" onClick={() => setPaymentPage((page) => Math.min(paymentPageCount - 1, page + 1))} disabled={paymentPage >= paymentPageCount - 1}>Next</button>
-              </div>
-            </div>
-          ) : null}
-          <p className="dp-note">Need to complete a failed or pending payment? Open the Booking page — a retry banner appears there automatically.</p>
         </section>
 
         <section className="dp-panel">
