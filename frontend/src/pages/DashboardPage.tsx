@@ -184,10 +184,6 @@ export default function DashboardPage() {
   const [walletData, setWalletData] = useState<DashboardWalletData | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState("");
-  const [depositForm, setDepositForm] = useState({ amount: "", paymentMethod: "", paymentReference: "", note: "" });
-  const [depositSubmitting, setDepositSubmitting] = useState(false);
-  const [depositMessage, setDepositMessage] = useState("");
-  const [depositError, setDepositError] = useState("");
 
   useEffect(() => {
     const { accessToken } = getSession();
@@ -244,30 +240,6 @@ export default function DashboardPage() {
     }
   }
 
-  async function submitDeposit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setDepositMessage("");
-    setDepositError("");
-    setDepositSubmitting(true);
-    try {
-      await accessWalletApi("/deposits", {
-        body: {
-          amount: Number(depositForm.amount),
-          paymentMethod: depositForm.paymentMethod,
-          paymentReference: depositForm.paymentReference,
-          note: depositForm.note,
-        },
-      });
-      setDepositForm({ amount: "", paymentMethod: "", paymentReference: "", note: "" });
-      setDepositMessage("Deposit request submitted successfully. Your agency or administrator can now review it.");
-      await loadWallet();
-    } catch (err: any) {
-      setDepositError(err?.data?.message || err?.message || "Deposit request failed");
-    } finally {
-      setDepositSubmitting(false);
-    }
-  }
-
   async function handleLogout() {
     setLoggingOut(true);
     setError("");
@@ -295,7 +267,6 @@ export default function DashboardPage() {
   const paymentPageCount = Math.max(1, Math.ceil(payments.length / paymentPageSize));
   const visiblePayments = payments.slice(paymentPage * paymentPageSize, (paymentPage + 1) * paymentPageSize);
   const account = walletData?.account || accessUser;
-  const selectedDepositMethod = walletData?.billingSettings?.payment_methods?.find((item) => item.code === depositForm.paymentMethod);
   const displayName = account?.name || me?.name || me?.login || "User";
   const initials = useMemo(() => initialsFrom(displayName), [displayName]);
 
@@ -327,15 +298,6 @@ export default function DashboardPage() {
           </button>
           <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("payment-history")}>
             <span className="dp-nav-ico">▤</span> Payment history
-          </button>
-          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("wallet-balance")}>
-            <span className="dp-nav-ico">¤</span> Wallet balance
-          </button>
-          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("credit-history")}>
-            <span className="dp-nav-ico">↕</span> Credit/debit history
-          </button>
-          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("deposit-requests")}>
-            <span className="dp-nav-ico">＋</span> Deposit requests
           </button>
         </nav>
 
@@ -501,54 +463,7 @@ export default function DashboardPage() {
           ) : null}
         </section>
 
-        <section className="dp-panel" id="wallet-balance">
-          <div className="dp-panel-head">
-            <div><h2>Wallet & credit history</h2><span className="dp-sub">Your live balance, deposits, manual credits and booking debits.</span></div>
-            <div style={{ display: "flex", gap: "10px" }}><button className="dp-btn" type="button" onClick={loadWallet} disabled={walletLoading}>{walletLoading ? "Refreshing…" : "↻ Refresh"}</button><Link className="dp-btn" to="/wallet">Open wallet →</Link></div>
-          </div>
-          {walletError && <div className="dp-error">{walletError}</div>}
-          {!walletError && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "14px", marginBottom: "18px" }}>
-            <div className="dp-stat dp-stat--green"><span className="dp-stat-label">Current balance</span><strong>{walletLoading ? "…" : Number(walletData?.wallet?.balance || 0).toFixed(2)}</strong><small>{walletData?.wallet?.currency || "CREDIT"}</small></div>
-            <div className="dp-stat dp-stat--amber"><span className="dp-stat-label">Deposit requests</span><strong>{walletLoading ? "…" : walletData?.deposits?.length || 0}</strong><small>{walletData?.deposits?.filter((item) => item.status === "PENDING").length || 0} pending</small></div>
-            <div className="dp-stat dp-stat--gold"><span className="dp-stat-label">Booking credit cost</span><strong>{walletLoading ? "…" : Number(walletData?.billingSettings?.booking_credit_cost || 0).toFixed(2)}</strong><small>Set by {walletData?.billingSettings?.source === "AGENCY" ? "your Agency" : "administrator"}</small></div>
-          </div>}
 
-          <div className="dp-deposit-box">
-            <div className="dp-deposit-copy">
-              <span className="dp-deposit-eyebrow">ADD CREDIT</span>
-              <h3>Request a deposit</h3>
-              <p>Submit your payment details here. Your balance updates only after your agency or administrator approves the request.</p>
-            </div>
-            {walletLoading && !walletData ? (
-              <div className="dp-permission-note">Loading your deposit permission…</div>
-            ) : walletData?.permissions?.["wallet.deposit"] ? (
-              <form className="dp-deposit-form" onSubmit={submitDeposit}>
-                <label><span>Amount *</span><input type="number" min="0.01" max="1000000" step="0.01" placeholder="0.00" value={depositForm.amount} onChange={(event) => setDepositForm({ ...depositForm, amount: event.target.value })} required /></label>
-                <label><span>Payment method *</span><select value={depositForm.paymentMethod} onChange={(event) => setDepositForm({ ...depositForm, paymentMethod: event.target.value })} required><option value="">Select payment method</option>{walletData?.billingSettings?.payment_methods?.map((method) => <option key={method.code} value={method.code}>{method.label} · {method.receiver_account}</option>)}</select></label>
-                <label><span>Payment reference</span><input maxLength={160} placeholder="Transaction/reference ID" value={depositForm.paymentReference} onChange={(event) => setDepositForm({ ...depositForm, paymentReference: event.target.value })} /></label>
-                <label><span>Note</span><input maxLength={500} placeholder="Optional note" value={depositForm.note} onChange={(event) => setDepositForm({ ...depositForm, note: event.target.value })} /></label>
-                <button className="dp-btn dp-btn--primary" type="submit" disabled={depositSubmitting || walletLoading}>{depositSubmitting ? "Submitting…" : "Submit deposit request"}</button>
-                {selectedDepositMethod && <div className="dp-permission-note" style={{ gridColumn: "1 / -1" }}>Send payment to <strong>{selectedDepositMethod.label} {selectedDepositMethod.receiver_account}</strong>. {selectedDepositMethod.instructions || "Enter the transaction ID as your payment reference."}</div>}
-              </form>
-            ) : (
-              <div className="dp-permission-note">Deposit requests are not enabled for this account. Contact your agency or administrator to enable the wallet deposit permission.</div>
-            )}
-            {depositMessage && <div className="dp-success">{depositMessage}</div>}
-            {depositError && <div className="dp-error dp-form-message">{depositError}</div>}
-          </div>
-
-          <h3 id="credit-history" style={{ margin: "0 0 10px", fontSize: "15px" }}>Recent credit & debit history</h3>
-          <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Description</th><th>Date</th><th>Type</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
-            {walletData?.transactions?.slice(0, 8).map((item) => <tr key={item.id}><td>{item.description || item.transaction_type}</td><td>{formatTimestamp(item.created_at)}</td><td><span className={`dp-badge dp-badge--${item.direction === "credit" ? "success" : "failed"}`}>{item.direction}</span></td><td style={{ color: item.direction === "credit" ? "var(--dp-green)" : "var(--dp-red)", fontWeight: 800 }}>{item.direction === "credit" ? "+" : "−"}{Number(item.amount).toFixed(2)}</td><td>{Number(item.balance_after).toFixed(2)}</td></tr>)}
-            {!walletLoading && !walletData?.transactions?.length && <tr><td colSpan={5}>No credit or debit history yet.</td></tr>}
-          </tbody></table></div>
-
-          <h3 id="deposit-requests" style={{ margin: "20px 0 10px", fontSize: "15px" }}>Recent deposits</h3>
-          <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Method</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>
-            {walletData?.deposits?.slice(0, 5).map((item) => <tr key={item.id}><td>{item.payment_method}</td><td>{formatTimestamp(item.created_at)}</td><td>{Number(item.amount).toFixed(2)}</td><td><span className={`dp-badge dp-badge--${item.status === "APPROVED" ? "success" : item.status === "REJECTED" ? "failed" : "pending"}`}>{item.status}</span></td></tr>)}
-            {!walletLoading && !walletData?.deposits?.length && <tr><td colSpan={4}>No deposit requests yet.</td></tr>}
-          </tbody></table></div>
-        </section>
 
         <section className="dp-panel" id="payment-history">
           <div className="dp-panel-head">
