@@ -111,15 +111,44 @@ export function buildAgencyDashboard(
   walletBalances?: Map<string, number>,
 ) {
   const svpByEmail = new Map<string, SvpIdentity[]>();
+  const svpByLogin = new Map<string, SvpIdentity[]>();
   for (const svpUser of svpUsers) {
     const email = normalizedEmail(svpUser.email || svpUser.login);
-    if (!email) continue;
-    svpByEmail.set(email, [...(svpByEmail.get(email) || []), svpUser]);
+    if (email) svpByEmail.set(email, [...(svpByEmail.get(email) || []), svpUser]);
+    const login = normalizedEmail(svpUser.login);
+    if (login && login !== email) svpByLogin.set(login, [...(svpByLogin.get(login) || []), svpUser]);
   }
   const reservationsByEmail = new Map<string, typeof reservations>();
   for (const item of reservations) reservationsByEmail.set(item.svpEmail, [...(reservationsByEmail.get(item.svpEmail) || []), item]);
   const paymentsByEmail = new Map<string, typeof payments>();
   for (const item of payments) paymentsByEmail.set(item.svpEmail, [...(paymentsByEmail.get(item.svpEmail) || []), item]);
+
+  function findUserReservations(userEmail: string, userLogin?: string): typeof reservations {
+    const email = normalizedEmail(userEmail);
+    const results = reservationsByEmail.get(email) || [];
+    if (userLogin) {
+      const login = normalizedEmail(userLogin);
+      if (login && login !== email) {
+        for (const r of reservationsByEmail.get(login) || []) {
+          if (!results.some((x) => x.id === r.id)) results.push(r);
+        }
+      }
+    }
+    return results;
+  }
+  function findUserPayments(userEmail: string, userLogin?: string): typeof payments {
+    const email = normalizedEmail(userEmail);
+    const results = paymentsByEmail.get(email) || [];
+    if (userLogin) {
+      const login = normalizedEmail(userLogin);
+      if (login && login !== email) {
+        for (const p of paymentsByEmail.get(login) || []) {
+          if (!results.some((x) => x.id === p.id)) results.push(p);
+        }
+      }
+    }
+    return results;
+  }
 
   const agencies = accounts.filter((item) => item.role === "AGENCY");
   const users = accounts.filter((item) => item.role === "USER");
@@ -127,9 +156,11 @@ export function buildAgencyDashboard(
   return agencies.map((agency) => {
     const agencyUsers = users.filter((item) => item.agency_id === agency.id).map((user) => {
       const email = normalizedEmail(user.email);
-      const userReservations = reservationsByEmail.get(email) || [];
-      const userPayments = paymentsByEmail.get(email) || [];
       const svpAccounts = svpByEmail.get(email) || [];
+      const svpLogins = svpAccounts.map((s) => normalizedEmail(s.login)).filter(Boolean);
+      const allLogins = [...new Set(svpLogins)];
+      const userReservations = findUserReservations(user.email, allLogins[0]);
+      const userPayments = findUserPayments(user.email, allLogins[0]);
       const completedBookings = userReservations.filter((item) => item.completed).length;
       const pendingBookings = userReservations.filter((item) => !item.completed).length;
       const activeReservations = userReservations.filter((item) => {

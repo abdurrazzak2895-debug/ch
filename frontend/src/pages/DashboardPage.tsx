@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { apiAuth, clearSession, getSession } from "@/lib/api";
+import { api, apiAuth, clearSession, getSession } from "@/lib/api";
 import {
   fetchPaymentHistory,
   summarizePayments,
@@ -319,6 +319,9 @@ export default function DashboardPage() {
           </Link>
 
           <div className="dp-nav-label" style={{ marginTop: 12 }}>Dashboard sections</div>
+          <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("svp-login")}>
+            <span className="dp-nav-ico">✦</span> SVP Login
+          </button>
           <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("booking-status")}>
             <span className="dp-nav-ico">▣</span> Booking status
           </button>
@@ -430,6 +433,7 @@ export default function DashboardPage() {
           </div>
           <div className="dp-account-grid">
             <div><span>Full name</span><strong>{account?.name || displayName}</strong></div>
+            <div><span>SVP Login</span><strong>{me?.login || "Not available"}</strong></div>
             <div><span>Email address</span><strong>{account?.email || "Not available"}</strong></div>
             <div><span>Account role</span><strong>{account?.role || "USER"}</strong></div>
             <div><span>Account ID</span><strong className="dp-account-id">{account?.id || "Loading…"}</strong></div>
@@ -469,6 +473,18 @@ export default function DashboardPage() {
             </div>
             <span className="dp-stat-label">Pending</span>
             <strong>{paymentsLoading ? "…" : summary.pending}</strong>
+          </div>
+        </section>
+
+        <section className="dp-panel" id="svp-login">
+          <div className="dp-panel-head">
+            <div><h2>SVP Login</h2><span className="dp-sub">Your SVP platform credentials and session details.</span></div>
+          </div>
+          <div className="dp-account-grid">
+            <div><span>SVP Login</span><strong>{me?.login || "Loading…"}</strong></div>
+            <div><span>Full name</span><strong>{me?.name || "Not available"}</strong></div>
+            <div><span>Role</span><strong>{me?.role || "Labor"}</strong></div>
+            <div><span>Session status</span><strong className="dp-account-id">{loading ? "Checking…" : "Active"}</strong></div>
           </div>
         </section>
 

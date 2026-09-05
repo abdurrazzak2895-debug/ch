@@ -258,6 +258,22 @@ async function reconcileOrphanedDebits(
   const now = Date.now();
   const ONE_HOUR_MS = 60 * 60 * 1000;
 
+  // Fetch existing refunds for this account to avoid redundant refund attempts
+  const { data: refundRows } = await supabase
+    .from("wallet_transactions")
+    .select("id,reference_id,idempotency_key")
+    .eq("account_id", accountId)
+    .eq("direction", "credit")
+    .eq("transaction_type", "refund")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const refundedReservationIds = new Set<string>();
+  for (const r of refundRows || []) {
+    const rid = String(r.reference_id || "").trim();
+    if (rid) refundedReservationIds.add(rid);
+  }
+
   for (const debitTx of (walletRows || [])) {
     const reservationId = String(debitTx.reference_id || "").trim();
     if (!reservationId) continue;
@@ -265,13 +281,12 @@ async function reconcileOrphanedDebits(
     // Skip if reservation exists in SVP response
     if (reservationIds.has(reservationId)) continue;
 
+    // Skip if already refunded
+    if (refundedReservationIds.has(reservationId)) continue;
+
     // Only refund debits older than 1 hour (give SVP time to process)
     const debitAge = now - new Date(debitTx.created_at).getTime();
     if (debitAge < ONE_HOUR_MS) continue;
-
-    const refundKey = getReservationRefundIdempotencyKey(accountId, reservationId);
-    const alreadyRefunded = (walletRows || []).find((tx: any) => tx.idempotency_key === refundKey);
-    if (alreadyRefunded) continue;
 
     const refundAmount = Math.abs(Number(debitTx.amount));
     if (!Number.isFinite(refundAmount) || refundAmount <= 0) continue;
