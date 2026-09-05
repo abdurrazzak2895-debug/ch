@@ -426,20 +426,6 @@ export default function DashboardPage() {
           </div>
         ) : null}
 
-        <section className="dp-panel dp-account-panel">
-          <div className="dp-panel-head">
-            <div><h2>My account</h2><span className="dp-sub">Your candidate identity and account access details.</span></div>
-            <span className="dp-badge dp-badge--success">{account?.status || "ACTIVE"}</span>
-          </div>
-          <div className="dp-account-grid">
-            <div><span>Full name</span><strong>{account?.name || displayName}</strong></div>
-            <div><span>SVP Login</span><strong>{me?.login || "Not available"}</strong></div>
-            <div><span>Email address</span><strong>{account?.email || "Not available"}</strong></div>
-            <div><span>Account role</span><strong>{account?.role || "USER"}</strong></div>
-            <div><span>Account ID</span><strong className="dp-account-id">{account?.id || "Loading…"}</strong></div>
-          </div>
-        </section>
-
         <section className="dp-stats">
           <div className="dp-stat dp-stat--gold">
             <div className="dp-stat-head"><div className="dp-stat-ico">¤</div></div>
