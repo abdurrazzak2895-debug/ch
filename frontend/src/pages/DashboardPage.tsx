@@ -299,6 +299,9 @@ export default function DashboardPage() {
           <button className="dp-nav-item dp-nav-item--button" type="button" onClick={() => openDashboardSection("payment-history")}>
             <span className="dp-nav-ico">▤</span> Payment history
           </button>
+          <Link className="dp-nav-item" to="/wallet" onClick={() => setMenuOpen(false)}>
+            <span className="dp-nav-ico">＋</span> Deposit requests
+          </Link>
         </nav>
 
         <div className="dp-side-foot">
