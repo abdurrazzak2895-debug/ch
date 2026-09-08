@@ -3,7 +3,7 @@ Description=Run T2Hub session refresh every two hours
 
 [Timer]
 OnBootSec=10min
-OnUnitActiveSec=2h
+OnUnitActiveSec=1:30h
 Persistent=true
 Unit=t2hub-refresh.service
 
