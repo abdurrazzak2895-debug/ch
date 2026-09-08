@@ -23,17 +23,28 @@ const ROOT = path.resolve(__dirname, '..');
 const ENV_FILE = path.join(ROOT, '.env.t2hub');
 const SESSION_FILE = path.join(ROOT, 'captured', 't2hub-session', 'session.json');
 const SECRETS_FILE = path.join(ROOT, '.secrets', 't2hub-session.env');
-const PROJECT_REF = 'xklwzkraobxetxdcysun';
+const PROJECT_REF = process.env.SUPABASE_PROJECT_ID || 'xklwzkraobxetxdcysun';
 const interactive = process.argv.includes('--interactive') || process.argv.includes('-i');
 
 function loadEnv() {
-  const env = {};
+  // GitHub Actions supplies secrets through process.env. The local file is
+  // only a developer fallback and must never override CI secrets.
+  const env = {
+    T2HUB_EMAIL: process.env.T2HUB_EMAIL || '',
+    T2HUB_PASSWORD: process.env.T2HUB_PASSWORD || '',
+    T2HUB_LOGIN_URL: process.env.T2HUB_LOGIN_URL || '',
+    T2HUB_URL: process.env.T2HUB_URL || '',
+  };
   if (fs.existsSync(ENV_FILE)) {
     for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
       const t = line.trim();
       if (!t || t.startsWith('#')) continue;
       const eq = t.indexOf('=');
-      if (eq > 0) env[t.substring(0, eq).trim()] = t.substring(eq + 1).trim().replace(/^["']|["']$/g, '');
+      if (eq > 0) {
+        const key = t.substring(0, eq).trim();
+        const value = t.substring(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (!env[key]) env[key] = value;
+      }
     }
   }
   return env;
@@ -192,7 +203,7 @@ function pushToSupabase(envVars) {
       if (stderr.includes('Already set') || stderr.includes('already')) {
         console.log(`  ✓ ${name} already set`);
       } else {
-        console.error(`  ✗ ${name} failed: ${stderr.substring(0, 100)}`);
+        throw new Error(`${name} failed: ${stderr.substring(0, 300)}`);
       }
     } finally {
       try { fs.unlinkSync(tempEnv); } catch {}
