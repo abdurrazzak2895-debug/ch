@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: t2hub-session-refresh
+  cancel-in-progress: false
+
 jobs:
   refresh-session:
     runs-on: ubuntu-latest
