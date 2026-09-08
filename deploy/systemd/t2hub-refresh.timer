@@ -1,9 +1,12 @@
 [Unit]
-Description=Run T2Hub session refresh every two hours
+Description=Run T2Hub session refresh every 90 minutes
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=1:30h
+# Fixed wall-clock schedule: every 90 minutes (local server timezone).
+# 00:00, 01:30, 03:00, 04:30, ... 22:30.
+OnCalendar=*-*-* 00,03,06,09,12,15,18,21:00
+OnCalendar=*-*-* 01,04,07,10,13,16,19,22:30
+AccuracySec=1s
 Persistent=true
 Unit=t2hub-refresh.service
 
