@@ -82,12 +82,12 @@ async function loginT2Hub(env) {
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForTimeout(2000);
 
-    const emailSelectors = 'input[type="email"], input[type="text"][name="email"], input[name="email"], input[name="username"], input[name="login"], input[name="number"], input[placeholder*="email"], input[placeholder*="Email"], input[placeholder*="user"], input[placeholder*="login"], input[placeholder*="number"]';
+    const emailSelectors = '#form\\.mobile, #form\\.email, input[type="email"], input[type="text"][name="email"], input[name="email"], input[name="username"], input[name="login"], input[name="number"], input[placeholder*="email"], input[placeholder*="Email"], input[placeholder*="user"], input[placeholder*="login"], input[placeholder*="number"], input[placeholder*="mobile"], input[placeholder*="Mobile"]';
     const emailFilled = await page.fill(emailSelectors, email).catch(() => null);
     if (emailFilled === null) await page.type(emailSelectors, email, { delay: 50 });
     await page.waitForTimeout(500);
 
-    await page.fill('input[type="password"], input[name="password"]', password);
+    await page.fill('#form\\.password, input[type="password"], input[name="password"]', password);
     await page.waitForTimeout(500);
 
     console.log('  → Submitting login...');
@@ -96,6 +96,11 @@ async function loginT2Hub(env) {
       page.keyboard.press('Enter'),
     ]);
     await page.waitForTimeout(5000);
+
+    const loginError = await page.locator('body').innerText().catch(() => '');
+    if (/no agent or staff account found|invalid credentials|incorrect password|login failed/i.test(loginError)) {
+      throw new Error('T2Hub login failed: the supplied mobile number is not an agent/staff account or the credentials were rejected');
+    }
 
     const cookies = await context.cookies();
     console.log(`  → Captured ${cookies.length} cookies`);
@@ -128,6 +133,10 @@ async function loginT2Hub(env) {
     const finalKey = await page.evaluate(() => {
       try { return window.__sk || null; } catch { return null; }
     }).catch(() => null);
+
+    if (!finalKey) {
+      throw new Error('T2Hub encryption key was not captured; refusing to publish cookies without a matching key');
+    }
 
     await browser.close();
 
