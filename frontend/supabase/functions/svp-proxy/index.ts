@@ -1124,6 +1124,40 @@ Deno.serve(async (req) => {
       return json({ ...sessionsData, sessions, exam_sessions: sessions, sites: filteredSites });
     }
 
+    // Public discovery routes do not require a candidate account. Keep these
+    // before requireAuth so the booking page can load its initial catalog.
+    if (req.method === "GET" && path === "/occupations") {
+      return json(await svpFetch(
+        buildPath("/api/v1/visitor_space/occupations", query),
+      ));
+    }
+
+    if (req.method === "GET" && path === "/test-centers") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      params.delete("category_id");
+      params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+      params.set("per_page", params.get("per_page") || "10000");
+      const requestedCity = normalizeCityName(params.get("city"));
+      params.delete("city");
+      const data = await svpFetch(buildPath("/api/v1/visitor_space/test_centers", params.toString()));
+      const centers = extractTestCenters(data)
+        .map(normalizeTestCenter)
+        .filter((center: any) => !requestedCity || String(center.city).toLowerCase() === requestedCity.toLowerCase())
+        .filter((center: any) => center.test_center_id && center.test_center_name);
+      return json({ test_centers: centers, centers, city: requestedCity });
+    }
+
+    if (req.method === "GET" && path === "/cities") {
+      const params = new URLSearchParams(query);
+      params.delete("locale");
+      params.set("country_id", params.get("country_id") || SVP_COUNTRY_ID);
+      params.set("per_page", params.get("per_page") || "10000");
+      const data = await svpFetch(buildPath("/api/v1/visitor_space/test_centers", params.toString()));
+      const cities = extractCities({ cities: extractTestCenters(data) });
+      return json({ cities, data: cities });
+    }
+
     const { user, svpToken } = await requireAuth(req);
 
     // ΓöÇΓöÇ Available dates (with fallbacks) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
