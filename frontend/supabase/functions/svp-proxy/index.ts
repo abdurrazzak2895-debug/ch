@@ -148,6 +148,10 @@ async function getBookingCreditCost(supabase: ReturnType<typeof getSupabase>, ag
   return amount;
 }
 
+function automaticRefundsEnabled(): boolean {
+  return Deno.env.get("AUTO_REFUND_ENABLED")?.trim().toLowerCase() === "true";
+}
+
 async function reconcileFinalizedReservationRefunds(
   supabase: ReturnType<typeof getSupabase>,
   accountId: string,
@@ -1468,6 +1472,9 @@ Deno.serve(async (req) => {
       const reservationsData = await svpFetch("/api/v1/individual_labor_space/exam_reservations?locale=en", {
         method: "GET", token: svpToken,
       });
+      if (!automaticRefundsEnabled()) {
+        return json({ enabled: false, verified: 0, results: [], message: "Automatic reservation refunds are disabled" }, 409);
+      }
       const results = await reconcileFinalizedReservationRefunds(
         accessCtx.supabase,
         accessCtx.account.id,
@@ -1612,7 +1619,7 @@ Deno.serve(async (req) => {
             body,
           });
         }
-        if (isReservationRead && accessContext?.account.permission_mode === "MANAGED") {
+        if (automaticRefundsEnabled() && isReservationRead && accessContext?.account.permission_mode === "MANAGED") {
           // Reservation status changes happen upstream, so reconcile on every
           // normal reservation read. The database RPC is deterministic and
           // idempotent; a transient wallet error must not hide the booking list.
@@ -1672,7 +1679,7 @@ Deno.serve(async (req) => {
             const isFinalized = isRefundEligibleReservation(reservationStatus, cancellationTimestamp);
 
             // Auto-refund if booking succeeded but reservation is already finalized
-            if (isFinalized && reservationId && walletTransaction) {
+            if (automaticRefundsEnabled() && isFinalized && reservationId && walletTransaction) {
               try {
                 const refundResult = await accessContext.supabase.rpc("wallet_refund_booking", {
                   p_account_id: accessContext.account.id,
