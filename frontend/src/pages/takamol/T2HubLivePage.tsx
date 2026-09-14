@@ -1,20 +1,9 @@
 import { useCallback, useState, useMemo, useEffect } from "react";
 import { MapPin, CalendarDays, RefreshCw, Search, Building2, Users, Armchair, CircleCheck, CircleX, Zap, Filter, ChevronLeft, ChevronRight, Clock, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
 import "@/styles/takamol.css";
 
 const DIVISIONS = ["Dhaka", "Chattogram", "Rajshahi", "Khulna", "Barishal", "Rangpur", "Mymensingh", "Sylhet"];
-
-const API_BASE = "https://xklwzkraobxetxdcysun.supabase.co/functions/v1/svp-proxy";
-const API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbHd6a3Jhb2J4ZXR4ZGN5c3VuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxNTI4ODAsImV4cCI6MjA3MTcyODg4MH0.ZfB5qzYtKjNNoGmzLkNnYKJwZ5oGJ8mL5oY0XqZ6X4";
-
-async function api<T = any>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: { apikey: API_KEY } });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
 
 /* ═══ Calendar Component ═══ */
 function MiniCalendar({ year, month, availableDates, onDateClick, selectedDate }: {
