@@ -2,9 +2,9 @@ name: Refresh T2Hub session
 
 on:
   schedule:
-    # T2Hub cookies currently live for about two hours. GitHub Actions may
-    # delay scheduled jobs, so the workflow can also be started manually.
-    - cron: "0 */2 * * *"
+    # Refresh every hour so the session remains valid even when GitHub
+    # delays a scheduled job. GitHub may still add a short scheduling delay.
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 permissions:
