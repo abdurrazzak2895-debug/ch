@@ -614,6 +614,9 @@ export default function BookingPage() {
       try {
         const params = new URLSearchParams({
           category_id: String(categoryId),
+          // Some SVP deployments distinguish the occupation id from its
+          // category id; sending both keeps either contract compatible.
+          occupation_id: String(selectedOccupationId),
         });
         const data = await api(`/available-dates?${params.toString()}`);
         if (!active) return;
@@ -1634,8 +1637,11 @@ export default function BookingPage() {
                   document.body,
                 )
               ) : null}
-              {!loadingDates && selectedCity && !availableDates.length ? (
-                <small className="bk-error-text">No available dates found yet. Try another city or occupation.</small>
+              {!loadingDates && selectedOccupationId && !availableDateEntries.length ? (
+                <small className="bk-error-text">
+                  SVP has no available dates for this occupation at the moment (category {categoryId}).
+                  Try another occupation or confirm that the requested city/date has been published by SVP.
+                </small>
               ) : null}
             </div>
 
