@@ -232,6 +232,8 @@ function normalizeDate(value: unknown): string {
 function normalizeOcrData(input: any): Json {
   const source = input?.data && typeof input.data === "object" && !Array.isArray(input.data) ? input.data : input;
   const sex = String(source?.sex || "").toLowerCase();
+  const mrzValue = source?.mrz_present;
+  const mrzPresent = mrzValue === true || ["true", "yes", "present"].includes(String(mrzValue || "").trim().toLowerCase());
   return {
     passport_number: normalizePassport(source?.passport_number),
     first_name: String(source?.first_name || source?.given_names || "").trim().toUpperCase(),
@@ -248,6 +250,7 @@ function normalizeOcrData(input: any): Json {
     issuing_country: String(source?.issuing_country || source?.issuing_authority || "").trim().toUpperCase(),
     passport_image_hash: String(source?.passport_image_hash || "").trim(),
     confidence: String(source?.confidence || "low").toLowerCase(),
+    mrz_present: mrzPresent,
   };
 }
 
@@ -281,8 +284,8 @@ async function runOcr(file: File): Promise<Json> {
   let payload: any = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
-    const providerMessage = String(payload?.message || payload?.error || "").slice(0, 240);
-    console.error(JSON.stringify({ event: "svp.ocr.upstream.error", status: response.status, elapsed_ms: Date.now() - startedAt, message: providerMessage }));
+    const providerMessage = String(payload?.message || payload?.error || payload?.detail || payload?.errors?.[0]?.message || "").trim().slice(0, 240);
+    console.error(JSON.stringify({ event: "svp.ocr.upstream.error", status: response.status, elapsed_ms: Date.now() - startedAt, message: providerMessage || "upstream response did not include a message" }));
     throw new Error(`SVP passport recognition failed (${response.status})${providerMessage ? `: ${providerMessage}` : ""}`);
   }
   const data = normalizeOcrData(payload?.data ?? payload);
@@ -539,6 +542,6 @@ Deno.serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed";
     const status = /Unauthorized|access token/i.test(message) ? 401 : /not configured|configuration/i.test(message) ? 503 : 400;
-    return json({ error: message }, status);
+    return json({ error: message, detail: message }, status);
   }
 });
