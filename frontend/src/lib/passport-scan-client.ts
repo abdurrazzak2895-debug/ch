@@ -9,6 +9,15 @@ export interface PassportScanData {
   date_of_birth: string;             // ISO YYYY-MM-DD (fits <input type="date"> directly)
   passport_expiration_date: string;  // ISO YYYY-MM-DD
   national_id: string;               // Separate holder ID printed on the passport, when present
+  personal_number?: string;
+  personal_id?: string;
+  holder_id?: string;
+  optional_data?: string;
+  mrz_optional_data?: string;
+  optional?: string;
+  mrz_text?: string;
+  raw_mrz?: string;
+  raw_text?: string;
   sex: "male" | "female" | "";
   nationality_code: string;          // 3-letter ISO ("BGD")
   country_code: string;              // 2-letter ISO ("BD")

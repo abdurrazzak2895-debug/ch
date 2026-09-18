@@ -237,8 +237,15 @@ function normalizeOcrData(input: any): Json {
   const mrzValue = source?.mrz_present;
   const mrzPresent = mrzValue === true || ["true", "yes", "present"].includes(String(mrzValue || "").trim().toLowerCase());
   const nationalId = normalizePassport(source?.national_id || source?.personal_number || source?.personal_id || source?.holder_id);
-  const optionalData = String(source?.optional_data || source?.mrz_optional_data || source?.optional || "").trim();
-  const mrzText = String(source?.mrz_text || source?.raw_mrz || source?.raw_text || "").trim();
+  const personalNumber = normalizePassport(source?.personal_number);
+  const personalId = normalizePassport(source?.personal_id);
+  const holderId = normalizePassport(source?.holder_id);
+  const optionalData = String(source?.optional_data || "").trim();
+  const mrzOptionalData = String(source?.mrz_optional_data || "").trim();
+  const optional = String(source?.optional || "").trim();
+  const mrzText = String(source?.mrz_text || "").trim();
+  const rawMrz = String(source?.raw_mrz || "").trim();
+  const rawText = String(source?.raw_text || "").trim();
   return {
     passport_number: normalizePassport(source?.passport_number),
     first_name: String(source?.first_name || source?.given_names || "").trim().toUpperCase(),
@@ -246,8 +253,15 @@ function normalizeOcrData(input: any): Json {
     date_of_birth: normalizeDate(source?.date_of_birth),
     passport_expiration_date: normalizeDate(source?.passport_expiration_date || source?.date_of_expiry),
     national_id: nationalId,
+    personal_number: personalNumber,
+    personal_id: personalId,
+    holder_id: holderId,
     optional_data: optionalData,
+    mrz_optional_data: mrzOptionalData,
+    optional,
     mrz_text: mrzText,
+    raw_mrz: rawMrz,
+    raw_text: rawText,
     sex: sex === "m" ? "male" : sex === "f" ? "female" : sex,
     nationality_code: String(source?.nationality_code || source?.nationality || "").trim().toUpperCase(),
     country_code: String(source?.country_code || "").trim().toUpperCase(),
