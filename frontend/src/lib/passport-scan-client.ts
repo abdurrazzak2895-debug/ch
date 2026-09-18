@@ -19,6 +19,7 @@ export interface PassportScanData {
   issuing_country: string;           // e.g. "BANGLADESH"
   portrait_box: number[];            // [ymin, xmin, ymax, xmax], normalized 0..1000
   confidence: "high" | "medium" | "low";
+  mrz_present: boolean;              // both MRZ lines were visible on the biodata page
   raw?: string;
 }
 
@@ -87,7 +88,7 @@ export async function cropPassportPortrait(file: File, portraitBox: readonly num
 
 export async function scanPassport(file: File): Promise<PassportScanData> {
   if (!isSupportedPassportImage(file)) {
-    throw new Error("Please upload a JPEG, PNG or WEBP passport photo for auto-fill (PDF not supported).");
+    throw new Error("Upload one JPEG, PNG or WEBP image of the passport biodata page. Do not upload a PDF, personal-data page, or combined document.");
   }
   const form = new FormData();
   form.append("file", file);
@@ -109,5 +110,9 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
   if (!body?.ok || !body?.data) {
     throw new Error("Passport scan returned an unexpected response.");
   }
-  return body.data;
+  const scan = body.data;
+  if (scan.mrz_present !== true) {
+    throw new Error("Invalid passport MRZ. Upload a clear single biodata page showing both MRZ lines at the bottom; do not upload the personal-data page or a combined document.");
+  }
+  return scan;
 }
