@@ -13,7 +13,7 @@ import {
   getResponseCenterIds, getResponseCenterName, resolveVerifiedResponseCenterId,
   filterCentersWithAvailableSessions, buildCenterOptions, buildCityOptions, buildDateOptions, buildCalendarDays,
   mergeVerifiedCityCenterRoster,
-  formatDateLabel, detectBookingMode, resolveSessionCenter, resolveVerifiedSessionCenterId, SectionCenterRule,
+  formatDateLabel, formatLanguageCodeName, detectBookingMode, resolveSessionCenter, resolveVerifiedSessionCenterId, SectionCenterRule,
   isNoExamSession422,
   isT2HubSessionMissing,
   T2HUB_SESSION_MISSING_MESSAGE,
@@ -48,6 +48,7 @@ export default function BookingPage() {
   const [calendarMonth, setCalendarMonth] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [t2HubCategoryId, setT2HubCategoryId] = useState("");
+  const [t2HubLanguageCode, setT2HubLanguageCode] = useState("");
   const [methodology, setMethodology] = useState("in_person");
   const [selectedCenterId, setSelectedCenterId] = useState("");
   const [siteId, setSiteId] = useState("");
@@ -647,6 +648,7 @@ export default function BookingPage() {
     let active = true;
     if (!selectedOccupationId) {
       setT2HubCategoryId("");
+      setT2HubLanguageCode("");
       return () => { active = false; };
     }
     api("/t2hub/occupations")
@@ -655,8 +657,11 @@ export default function BookingPage() {
         const items = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
         const match = items.find((item: any) => String(item?.occupation_id ?? "") === String(selectedOccupationId));
         setT2HubCategoryId(String(match?.id ?? match?.category_id ?? selectedOccupationId));
+        const languageCode = String(match?.language_code ?? "");
+        setT2HubLanguageCode(languageCode);
+        if (languageCode) setLanguageCode((current) => current || languageCode);
       })
-      .catch(() => { if (active) setT2HubCategoryId(String(selectedOccupationId)); });
+      .catch(() => { if (active) { setT2HubCategoryId(String(selectedOccupationId)); setT2HubLanguageCode(""); } });
     return () => { active = false; };
   }, [selectedOccupationId]);
 
@@ -1711,6 +1716,9 @@ export default function BookingPage() {
                 {categoryLanguageCodes.map((item) => (
                   <option key={item.code} value={item.code}>{item.name}</option>
                 ))}
+                {!categoryLanguageCodes.length && t2HubLanguageCode ? (
+                  <option value={t2HubLanguageCode}>{formatLanguageCodeName(t2HubLanguageCode)}</option>
+                ) : null}
               </select>
             </div>
           </div>
