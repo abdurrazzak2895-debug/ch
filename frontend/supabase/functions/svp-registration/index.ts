@@ -503,6 +503,10 @@ async function handleStore(req: Request, client: SupabaseClient, account: AuthAc
   const normalizedPii = pii && typeof pii === "object" ? {
     ...pii,
     phone_number: normalizePhone(pii.phone_number || pii.phone || pii.mobile || pii.telephone),
+    // National ID is optional at this storage boundary. Keep it explicit and
+    // null when the provider did not return one; the official validation step
+    // may still require a user-supplied value before account creation.
+    national_id: normalizePassport(pii.national_id || pii.personal_number || pii.personal_id || pii.holder_id) || null,
   } : pii;
   const documentId = String(body?.passport_document_id || "");
   const idempotencyKey = String(req.headers.get("idempotency-key") || body?.idempotency_key || "").trim();
