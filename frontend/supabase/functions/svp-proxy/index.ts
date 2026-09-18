@@ -1037,7 +1037,10 @@ Deno.serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/svp-proxy/, "");
+  const rawPath = url.pathname.replace(/^\/svp-proxy/, "");
+  // Keep provider-specific naming out of the browser-facing API contract.
+  // The internal handlers still use the existing upstream integration paths.
+  const path = rawPath.replace(/^\/booking-data(?=\/|$)/, "/t2hub");
   const query = url.search.replace(/^\?/, "");
 
   try {

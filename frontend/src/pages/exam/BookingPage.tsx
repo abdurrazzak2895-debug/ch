@@ -627,7 +627,7 @@ export default function BookingPage() {
         // category/session inventory. Use the mapped T2Hub category rather
         // than the SVP occupation id when that happens.
         if (!rawDates.length && t2HubCategoryId && t2HubCategoryId !== categoryId) {
-          const t2HubData = await api(`/t2hub/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`);
+          const t2HubData = await api(`/booking-data/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`);
           rawDates = t2HubData?.available_dates || t2HubData?.dates || t2HubData?.data || (Array.isArray(t2HubData) ? t2HubData : []);
         }
         const entries = normalizeAvailableDateEntries(rawDates);
@@ -651,7 +651,7 @@ export default function BookingPage() {
       setT2HubLanguageCode("");
       return () => { active = false; };
     }
-    api("/t2hub/occupations?per_page=1000")
+    api("/booking-data/occupations?per_page=1000")
       .then((data: any) => {
         if (!active) return;
         const items = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
@@ -771,7 +771,7 @@ export default function BookingPage() {
       setSessions([]);
       setError("");
       try {
-        const data: any = await api(`/t2hub/pacc-exam-sessions?${new URLSearchParams({
+        const data: any = await api(`/booking-data/pacc-exam-sessions?${new URLSearchParams({
           category_id: String(t2HubCategoryId || categoryId),
           city: String(selectedCity),
           exam_date: availableDate,
