@@ -47,6 +47,7 @@ export default function BookingPage() {
   const [availableDate, setAvailableDate] = useState("");
   const [calendarMonth, setCalendarMonth] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [t2HubCategoryId, setT2HubCategoryId] = useState("");
   const [methodology, setMethodology] = useState("in_person");
   const [selectedCenterId, setSelectedCenterId] = useState("");
   const [siteId, setSiteId] = useState("");
@@ -620,7 +621,14 @@ export default function BookingPage() {
         });
         const data = await api(`/available-dates?${params.toString()}`);
         if (!active) return;
-        const rawDates = data?.available_dates || data?.dates || data?.data || (Array.isArray(data) ? data : []);
+        let rawDates = data?.available_dates || data?.dates || data?.data || (Array.isArray(data) ? data : []);
+        // The SVP calendar can be empty even while T2Hub has the real
+        // category/session inventory. Use the mapped T2Hub category rather
+        // than the SVP occupation id when that happens.
+        if (!rawDates.length && t2HubCategoryId && t2HubCategoryId !== categoryId) {
+          const t2HubData = await api(`/t2hub/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`);
+          rawDates = t2HubData?.available_dates || t2HubData?.dates || t2HubData?.data || (Array.isArray(t2HubData) ? t2HubData : []);
+        }
         const entries = normalizeAvailableDateEntries(rawDates);
         const cities = [...new Set(entries.map((e) => e.city).filter(Boolean))].sort();
         setLiveCityOptions(cities);
@@ -630,7 +638,27 @@ export default function BookingPage() {
       finally { if (active) setLoadingDates(false); }
     })();
     return () => { active = false; };
-  }, [selectedOccupationId, categoryId]);
+  }, [selectedOccupationId, categoryId, t2HubCategoryId]);
+
+  // T2Hub groups SVP occupations under its own category id. For example,
+  // SVP occupation 2061 (Load and Unload Worker) belongs to T2Hub category
+  // 159. Resolve that mapping before using the T2Hub fallback routes.
+  useEffect(() => {
+    let active = true;
+    if (!selectedOccupationId) {
+      setT2HubCategoryId("");
+      return () => { active = false; };
+    }
+    api("/t2hub/occupations")
+      .then((data: any) => {
+        if (!active) return;
+        const items = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
+        const match = items.find((item: any) => String(item?.occupation_id ?? "") === String(selectedOccupationId));
+        setT2HubCategoryId(String(match?.id ?? match?.category_id ?? selectedOccupationId));
+      })
+      .catch(() => { if (active) setT2HubCategoryId(String(selectedOccupationId)); });
+    return () => { active = false; };
+  }, [selectedOccupationId]);
 
   useEffect(() => {
     setAvailableDate((prev) => (prev && availableDates.includes(prev) ? prev : availableDates[0] || ""));
@@ -739,7 +767,7 @@ export default function BookingPage() {
       setError("");
       try {
         const data: any = await api(`/t2hub/pacc-exam-sessions?${new URLSearchParams({
-          category_id: String(categoryId),
+          category_id: String(t2HubCategoryId || categoryId),
           city: String(selectedCity),
           exam_date: availableDate,
         }).toString()}`);
@@ -782,7 +810,7 @@ export default function BookingPage() {
       }
     })();
     return () => { active = false; };
-  }, [selectedCity, availableDate, categoryId]);
+  }, [selectedCity, availableDate, categoryId, t2HubCategoryId]);
 
   // Sessions are already loaded by the date effect above. When the user picks
   // a center, filter the existing sessions locally — no extra API call needed.
