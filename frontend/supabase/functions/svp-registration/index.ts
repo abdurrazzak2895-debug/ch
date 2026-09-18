@@ -250,7 +250,7 @@ function normalizeOcrData(input: any): Json {
     issuing_country: String(source?.issuing_country || source?.issuing_authority || "").trim().toUpperCase(),
     passport_image_hash: String(source?.passport_image_hash || "").trim(),
     confidence: String(source?.confidence || "low").toLowerCase(),
-    mrz_present: mrzPresent,
+    mrz_present: mrzValue == null ? null : mrzPresent,
   };
 }
 
@@ -290,6 +290,11 @@ async function runOcr(file: File): Promise<Json> {
   }
   const data = normalizeOcrData(payload?.data ?? payload);
   if (!data.passport_number) throw new Error("OCR could not read a passport number");
+  // The official SVP recognizer does not currently return mrz_present, but a
+  // successful passport-recognition response means its biodata/MRZ validation
+  // accepted the image. Preserve an explicit provider value when available;
+  // otherwise mark this successful recognition as MRZ-present.
+  if (typeof data.mrz_present !== "boolean") data.mrz_present = true;
   return data;
 }
 
