@@ -284,7 +284,7 @@ async function runOcr(file: File): Promise<Json> {
   let payload: any = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
-    const providerMessage = String(payload?.message || payload?.error || payload?.detail || payload?.errors?.[0]?.message || "").trim().slice(0, 240);
+    const providerMessage = String(payload?.message || payload?.error || payload?.detail || (typeof payload?.errors === "string" ? payload.errors : payload?.errors?.[0]?.message || payload?.errors?.message) || "").trim().slice(0, 240);
     console.error(JSON.stringify({ event: "svp.ocr.upstream.error", status: response.status, elapsed_ms: Date.now() - startedAt, message: providerMessage || "upstream response did not include a message" }));
     throw new Error(`SVP passport recognition failed (${response.status})${providerMessage ? `: ${providerMessage}` : ""}`);
   }
@@ -541,7 +541,8 @@ Deno.serve(async (req) => {
     return json({ error: "Not found" }, 404);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed";
-    const status = /Unauthorized|access token/i.test(message) ? 401 : /not configured|configuration/i.test(message) ? 503 : 400;
+    const upstreamStatus = message.match(/SVP passport recognition failed \((\d{3})\)/)?.[1];
+    const status = upstreamStatus ? Number(upstreamStatus) : /Unauthorized|access token/i.test(message) ? 401 : /not configured|configuration/i.test(message) ? 503 : 400;
     return json({ error: message, detail: message }, status);
   }
 });
