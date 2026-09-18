@@ -1070,7 +1070,9 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && path === "/t2hub/occupations") {
       const params = new URLSearchParams(query);
-      params.set("per_page", params.get("per_page") || "1000");
+      // The upstream currently returns 250 records (count === total), but use
+      // a high internal page size so future catalog growth is loaded in full.
+      params.set("per_page", "10000");
       return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
     }
 
