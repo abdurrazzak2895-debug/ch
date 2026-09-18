@@ -1,10 +1,6 @@
-// Passport auto-fill client.
-//
-// Passport OCR is exposed by the Railway backend. An explicit URL still wins,
-// which is useful for isolated testing and alternate deployments.
-//
-// For non-preview deployments, set VITE_PASSPORT_SCAN_URL to an absolute URL
-// (e.g. "https://your-fastapi.example.com/api/passport-scan").
+// Passport auto-fill client backed by the Supabase svp-registration function.
+
+import { getAccessToken } from "./access-api";
 
 export interface PassportScanData {
   passport_number: string;
@@ -28,14 +24,11 @@ export interface PassportScanResponse {
 }
 
 const ACCEPTED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"] as const;
-const DEFAULT_RAILWAY_URL = "https://choyes-production.up.railway.app";
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
 
 function resolveScanUrl(): string {
-  const override = import.meta.env.VITE_PASSPORT_SCAN_URL as string | undefined;
-  if (override && override.trim()) return override.replace(/\/$/, "");
-  const backend = import.meta.env.VITE_BACKEND_URL as string | undefined;
-  if (backend && backend.trim()) return `${backend.replace(/\/$/, "")}/api/passport-scan`;
-  return `${DEFAULT_RAILWAY_URL}/api/passport-scan`;
+  if (!SUPABASE_URL) throw new Error("VITE_SUPABASE_URL is not configured");
+  return `${SUPABASE_URL}/functions/v1/svp-registration/ocr-scan`;
 }
 
 export function isSupportedPassportImage(file: File): boolean {
@@ -91,10 +84,17 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
   }
   const form = new FormData();
   form.append("file", file);
+  const token = getAccessToken();
+  if (!token) throw new Error("Sign in before scanning a passport.");
+  const idempotencyKey = crypto.randomUUID();
 
   let res: Response;
   try {
-    res = await fetch(resolveScanUrl(), { method: "POST", body: form });
+    res = await fetch(resolveScanUrl(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": idempotencyKey },
+      body: form,
+    });
   } catch {
     throw new Error("Passport auto-fill service could not be reached. Please try again or enter the details manually.");
   }
@@ -106,8 +106,9 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
     const message = body?.detail || body?.message || `Passport auto-fill service is unavailable (HTTP ${res.status}).`;
     throw new Error(String(message));
   }
-  if (!body?.ok || !body?.data) {
+  const data = body?.data?.ocr || body?.data;
+  if (!body?.ok || !data) {
     throw new Error("Passport scan returned an unexpected response.");
   }
-  return body.data;
+  return data as PassportScanData;
 }
