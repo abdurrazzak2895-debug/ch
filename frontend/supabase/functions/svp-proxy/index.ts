@@ -1066,7 +1066,9 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === "GET" && path === "/t2hub/occupations") {
-      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", new URLSearchParams(query)), req));
+      const params = new URLSearchParams(query);
+      params.set("per_page", params.get("per_page") || "1000");
+      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-available-dates") {

@@ -651,7 +651,7 @@ export default function BookingPage() {
       setT2HubLanguageCode("");
       return () => { active = false; };
     }
-    api("/t2hub/occupations")
+    api("/t2hub/occupations?per_page=1000")
       .then((data: any) => {
         if (!active) return;
         const items = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
