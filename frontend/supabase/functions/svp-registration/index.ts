@@ -224,6 +224,16 @@ function normalizePassport(value: unknown): string {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function normalizePhone(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("880")) return `+${digits}`;
+  if (digits.startsWith("0")) return `+880${digits.slice(1)}`;
+  return raw.startsWith("+") ? `+${digits}` : `+${digits}`;
+}
+
 function normalizeDate(value: unknown): string {
   const text = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
@@ -490,6 +500,10 @@ async function handleStore(req: Request, client: SupabaseClient, account: AuthAc
   requireCryptoConfig();
   const body = await req.json().catch(() => ({}));
   const pii = body?.personal_information;
+  const normalizedPii = pii && typeof pii === "object" ? {
+    ...pii,
+    phone_number: normalizePhone(pii.phone_number || pii.phone || pii.mobile || pii.telephone),
+  } : pii;
   const documentId = String(body?.passport_document_id || "");
   const idempotencyKey = String(req.headers.get("idempotency-key") || body?.idempotency_key || "").trim();
   const passportNumber = normalizePassport(pii?.passport_number);
@@ -515,7 +529,7 @@ async function handleStore(req: Request, client: SupabaseClient, account: AuthAc
 
   const passportHash = await hmacPassport(passportNumber);
   const encryptedPii = await encryptJson({
-    ...pii,
+    ...normalizedPii,
     passport_number: passportNumber,
     submitted_by_account_id: account.id,
     submitted_at: new Date().toISOString(),
