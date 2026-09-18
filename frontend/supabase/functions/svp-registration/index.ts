@@ -236,12 +236,18 @@ function normalizeOcrData(input: any): Json {
   const sex = String(source?.sex || "").toLowerCase();
   const mrzValue = source?.mrz_present;
   const mrzPresent = mrzValue === true || ["true", "yes", "present"].includes(String(mrzValue || "").trim().toLowerCase());
+  const nationalId = normalizePassport(source?.national_id || source?.personal_number || source?.personal_id || source?.holder_id);
+  const optionalData = String(source?.optional_data || source?.mrz_optional_data || source?.optional || "").trim();
+  const mrzText = String(source?.mrz_text || source?.raw_mrz || source?.raw_text || "").trim();
   return {
     passport_number: normalizePassport(source?.passport_number),
     first_name: String(source?.first_name || source?.given_names || "").trim().toUpperCase(),
     last_name: String(source?.last_name || source?.surname || "").trim().toUpperCase(),
     date_of_birth: normalizeDate(source?.date_of_birth),
     passport_expiration_date: normalizeDate(source?.passport_expiration_date || source?.date_of_expiry),
+    national_id: nationalId,
+    optional_data: optionalData,
+    mrz_text: mrzText,
     sex: sex === "m" ? "male" : sex === "f" ? "female" : sex,
     nationality_code: String(source?.nationality_code || source?.nationality || "").trim().toUpperCase(),
     country_code: String(source?.country_code || "").trim().toUpperCase(),
