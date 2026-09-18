@@ -226,7 +226,9 @@ function normalizePassport(value: unknown): string {
 
 function normalizeDate(value: unknown): string {
   const text = String(value || "").trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const match = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : "";
 }
 
 function normalizeOcrData(input: any): Json {

@@ -32,6 +32,13 @@ function resolveScanUrl(): string {
   return `${SUPABASE_URL}/functions/v1/svp-registration/ocr-scan`;
 }
 
+function normalizeDateInput(value: unknown): string {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const match = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : "";
+}
+
 export function isSupportedPassportImage(file: File): boolean {
   const mime = (file.type || "").toLowerCase();
   if (ACCEPTED_MIME_TYPES.includes(mime as (typeof ACCEPTED_MIME_TYPES)[number])) return true;
@@ -100,18 +107,22 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
     throw new Error("Passport auto-fill service could not be reached. Please try again or enter the details manually.");
   }
   const text = await res.text();
-  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown }) | null;
+  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown; error?: unknown }) | null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
 
   if (!res.ok) {
-    const message = body?.detail || body?.message || `Passport auto-fill service is unavailable (HTTP ${res.status}).`;
+    const message = body?.detail || body?.message || body?.error || `Passport auto-fill service is unavailable (HTTP ${res.status}).`;
     throw new Error(String(message));
   }
   const data = body?.data?.ocr || body?.data;
   if (!body?.ok || !data) {
     throw new Error("Passport scan returned an unexpected response.");
   }
-  const scan = data as PassportScanData;
+  const scan = {
+    ...(data as PassportScanData),
+    date_of_birth: normalizeDateInput((data as PassportScanData).date_of_birth),
+    passport_expiration_date: normalizeDateInput((data as PassportScanData).passport_expiration_date),
+  };
   if (scan.mrz_present !== true) {
     throw new Error("Invalid passport MRZ. Upload a clear single biodata page showing both MRZ lines at the bottom; do not upload the personal-data page or a combined document.");
   }
