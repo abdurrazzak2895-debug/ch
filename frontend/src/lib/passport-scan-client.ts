@@ -21,6 +21,10 @@ export interface PassportScanData {
   sex: "male" | "female" | "";
   nationality_code: string;          // 3-letter ISO ("BGD")
   country_code: string;              // 2-letter ISO ("BD")
+  country_id?: number | null;        // SVP country id (matches /registration/countries id)
+  nationality_id?: number | null;    // SVP nationality id
+  country?: Record<string, any> | null;      // full SVP country object (has country_code)
+  nationality?: Record<string, any> | null;  // full SVP nationality object (has nationality_code)
   issuing_country: string;           // e.g. "BANGLADESH"
   portrait_box: number[];            // [ymin, xmin, ymax, xmax], normalized 0..1000
   confidence: "high" | "medium" | "low";

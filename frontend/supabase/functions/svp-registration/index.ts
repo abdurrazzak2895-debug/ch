@@ -273,8 +273,8 @@ function normalizeOcrData(input: any): Json {
     raw_mrz: rawMrz,
     raw_text: rawText,
     sex: sex === "m" ? "male" : sex === "f" ? "female" : sex,
-    nationality_code: String(source?.nationality_code || source?.nationality || "").trim().toUpperCase(),
-    country_code: String(source?.country_code || "").trim().toUpperCase(),
+    nationality_code: String(source?.nationality_code || source?.nationality?.nationality_code || source?.nationality?.code || "").trim().toUpperCase(),
+    country_code: String(source?.country_code || source?.country?.country_code || source?.country?.code || "").trim().toUpperCase(),
     country_id: source?.country?.id ?? source?.country_id ?? null,
     nationality_id: source?.nationality?.id ?? source?.nationality_id ?? null,
     country: source?.country ?? null,
@@ -469,7 +469,30 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
   });
   if (registrationError) {
     await client.storage.from(BUCKET).remove([path]);
-    if (registrationError.code === "23505") return json({ error: "An active registration already exists for this passport or idempotency key" }, 409);
+    if (registrationError.code === "23505") {
+      // A draft already exists for this passport (the same user re-scanning, e.g.
+      // after a refresh or a retake). Don't hard-fail with 409 and throw away a
+      // perfectly good OCR read — return the freshly-recognized fields so the
+      // registration form still auto-fills, along with the existing draft id.
+      const { data: existing } = await client
+        .from("svp_registrations")
+        .select("id")
+        .eq("owner_account_id", account.id)
+        .eq("passport_number_hash", passportHash)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return json({
+        ok: true,
+        reused: true,
+        data: {
+          registration_id: existing?.id ?? null,
+          document: null,
+          ocr,
+          ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition",
+        },
+      }, 200);
+    }
     throw new Error(`Registration draft failed: ${registrationError.message}`);
   }
 
