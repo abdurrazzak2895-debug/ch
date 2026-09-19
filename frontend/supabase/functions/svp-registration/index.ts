@@ -287,9 +287,6 @@ function normalizeOcrData(input: any): Json {
 }
 
 async function runOcr(file: File): Promise<Json> {
-  const form = new FormData();
-  // This field name is used by the official SVP SPA client.
-  form.append("passport", file, file.name || "passport");
   const headers: Record<string, string> = {
     Accept: "application/json",
     Origin: "https://svp-international.pacc.sa",
@@ -297,22 +294,32 @@ async function runOcr(file: File): Promise<Json> {
     "X-Tenant-Name": SVP_TENANT,
   };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000);
-  let response: Response;
+  let response: Response | null = null;
+  let text = "";
   const startedAt = Date.now();
-  console.info(JSON.stringify({ event: "svp.ocr.upstream.start", bytes: file.size, mime: file.type }));
-  try {
-    response = await fetch(`${SVP_API_BASE}/individual_labor_space/registrations/recognize_passport?locale=${encodeURIComponent(SVP_LOCALE)}`, {
-      method: "POST",
-      headers,
-      body: form,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+  // The official SPA uses `passport`, while some SVP API deployments bind the
+  // uploaded multipart part as `file`. A single 422 retry is safe because
+  // passport recognition is read-only and prevents a field-name-only MRZ error.
+  for (const fieldName of ["passport", "file"]) {
+    const form = new FormData();
+    form.append(fieldName, file, file.name || "passport");
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    console.info(JSON.stringify({ event: "svp.ocr.upstream.start", field: fieldName, bytes: file.size, mime: file.type }));
+    try {
+      response = await fetch(`${SVP_API_BASE}/individual_labor_space/registrations/recognize_passport?locale=${encodeURIComponent(SVP_LOCALE)}`, {
+        method: "POST",
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    text = await response.text();
+    console.info(JSON.stringify({ event: "svp.ocr.upstream.response", field: fieldName, status: response.status, elapsed_ms: Date.now() - startedAt }));
+    if (response.ok || response.status !== 422 || fieldName === "file") break;
   }
-  console.info(JSON.stringify({ event: "svp.ocr.upstream.response", status: response.status, elapsed_ms: Date.now() - startedAt }));
-  const text = await response.text();
+  if (!response) throw new Error("SVP passport recognition did not return a response");
   let payload: any = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
