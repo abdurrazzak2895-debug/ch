@@ -230,7 +230,17 @@ export default function RegisterPage() {
         setScanStatus("done"); setScanMessage(`Auto-filled from this passport${extraFields.length ? `, including ${extraFields.join(" and ")}` : ""}. Please review before continuing.${data.national_id ? "" : " This passport has no readable separate National ID, so enter it manually."}`);
       }
     } catch (err: any) {
-      setScanStatus("error"); setScanMessage(err?.message || "Auto-fill failed — please enter your details manually.");
+      const message = String(err?.message || "Auto-fill failed");
+      // OCR is an auto-fill convenience; the official validation endpoint is
+      // still the source of truth. Do not block a user from continuing with
+      // manually reviewed passport fields when the recognizer rejects the
+      // image's MRZ (422). Other failures remain visible as hard errors.
+      if (/invalid passport mrz|passport recognition failed \(422\)/i.test(message)) {
+        setScanStatus("done");
+        setScanMessage("Passport OCR could not auto-fill this scan. Please review or enter the passport fields manually, then continue for official validation.");
+      } else {
+        setScanStatus("error"); setScanMessage(message || "Auto-fill failed — please enter your details manually.");
+      }
     }
   }
   function handleProfileFile(file: File | null) {
