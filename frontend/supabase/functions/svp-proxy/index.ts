@@ -348,6 +348,11 @@ let t2hubSession:
     }
   | null = null;
 
+// Occupations change infrequently. Reuse the catalog inside a warm Edge
+// Function isolate so every booking page does not repeat the same upstream
+// request. The short TTL keeps changes visible without making the catalog stale.
+let t2hubOccupationCache: { expiresAt: number; data: any } | null = null;
+
 // After every t2hub call we stash the most recent cookies here so the
 // response builder can echo them back to the caller in
 // `x-t2hub-cookie`. The caller is responsible for keeping its own copy in
@@ -1073,7 +1078,12 @@ Deno.serve(async (req) => {
       // The upstream currently returns 250 records (count === total), but use
       // a high internal page size so future catalog growth is loaded in full.
       params.set("per_page", "10000");
-      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
+      if (t2hubOccupationCache && t2hubOccupationCache.expiresAt > Date.now()) {
+        return json(t2hubOccupationCache.data);
+      }
+      const data = await t2hubFetch(t2hubQuery("/pacc/occupations", params), req);
+      t2hubOccupationCache = { expiresAt: Date.now() + 5 * 60 * 1000, data };
+      return json(data);
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
@@ -1104,8 +1114,10 @@ Deno.serve(async (req) => {
         throw { statusCode: 400, message: "Missing city, category_id, or exam_date" };
       }
 
-      const centersData = await t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req);
-      const sessionsData = await t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req);
+      const [centersData, sessionsData] = await Promise.all([
+        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
+        t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req),
+      ]);
       const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
       const centerByName = new Map(
         centers.map((center: any) => [String(center?.name || "").trim().toLowerCase(), center])

@@ -552,10 +552,11 @@ export default function BookingPage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
       setLoadingOccupations(true); setError("");
       try {
-        const data = await api(`/occupations?per_page=1000&locale=en`);
+        const data = await api(`/occupations?per_page=1000&locale=en`, { signal: controller.signal });
         const arr = pickArray(data);
         const seen = new Set<string>();
         const unique = arr.filter((it: any) => {
@@ -565,9 +566,12 @@ export default function BookingPage() {
           return true;
         });
         setOccupations(unique.map(normalizeOccupation));
-      } catch (err: any) { setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load occupations")); }
+      } catch (err: any) {
+        if (err?.name !== "AbortError") setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load occupations"));
+      }
       finally { setLoadingOccupations(false); }
     })();
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -610,24 +614,27 @@ export default function BookingPage() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     (async () => {
-      if (!selectedOccupationId) { setAvailableDateEntries([]); setAvailableDate(""); return; }
+      // Wait until the SVP occupation and its T2Hub category are resolved.
+      // This prevents empty-category requests and duplicate fallback requests.
+      if (!selectedOccupationId || !categoryId || !t2HubCategoryId) { setAvailableDateEntries([]); setAvailableDate(""); return; }
       setLoadingDates(true); setError("");
       try {
-        const params = new URLSearchParams({
-          category_id: String(categoryId),
-          // Some SVP deployments distinguish the occupation id from its
-          // category id; sending both keeps either contract compatible.
-          occupation_id: String(selectedOccupationId),
-        });
-        const data = await api(`/available-dates?${params.toString()}`);
+        const mappedToT2Hub = t2HubCategoryId !== categoryId;
+        const data = await api(mappedToT2Hub
+          ? `/booking-data/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`
+          : `/available-dates?${new URLSearchParams({
+              category_id: String(categoryId),
+              occupation_id: String(selectedOccupationId),
+            }).toString()}`, { signal: controller.signal });
         if (!active) return;
         let rawDates = data?.available_dates || data?.dates || data?.data || (Array.isArray(data) ? data : []);
         // The SVP calendar can be empty even while T2Hub has the real
         // category/session inventory. Use the mapped T2Hub category rather
         // than the SVP occupation id when that happens.
-        if (!rawDates.length && t2HubCategoryId && t2HubCategoryId !== categoryId) {
-          const t2HubData = await api(`/booking-data/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`);
+        if (!rawDates.length && !mappedToT2Hub && t2HubCategoryId && t2HubCategoryId !== categoryId) {
+          const t2HubData = await api(`/booking-data/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`, { signal: controller.signal });
           rawDates = t2HubData?.available_dates || t2HubData?.dates || t2HubData?.data || (Array.isArray(t2HubData) ? t2HubData : []);
         }
         const entries = normalizeAvailableDateEntries(rawDates);
@@ -635,10 +642,10 @@ export default function BookingPage() {
         setLiveCityOptions(cities);
         setAvailableDateEntries(entries);
         setSelectedCity((prev) => (prev && cities.includes(prev) ? prev : cities[0] || prev || ""));
-      } catch (err: any) { if (!active) return; setAvailableDateEntries([]); setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load available dates")); }
+      } catch (err: any) { if (!active || err?.name === "AbortError") return; setAvailableDateEntries([]); setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load available dates")); }
       finally { if (active) setLoadingDates(false); }
     })();
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [selectedOccupationId, categoryId, t2HubCategoryId]);
 
   // T2Hub groups SVP occupations under its own category id. For example,
@@ -646,12 +653,13 @@ export default function BookingPage() {
   // 159. Resolve that mapping before using the T2Hub fallback routes.
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     if (!selectedOccupationId) {
       setT2HubCategoryId("");
       setT2HubLanguageCode("");
       return () => { active = false; };
     }
-    api("/booking-data/occupations?per_page=1000")
+    api("/booking-data/occupations?per_page=1000", { signal: controller.signal })
       .then((data: any) => {
         if (!active) return;
         const items = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
@@ -661,8 +669,8 @@ export default function BookingPage() {
         setT2HubLanguageCode(languageCode);
         if (languageCode) setLanguageCode((current) => current || languageCode);
       })
-      .catch(() => { if (active) { setT2HubCategoryId(String(selectedOccupationId)); setT2HubLanguageCode(""); } });
-    return () => { active = false; };
+      .catch((err: any) => { if (active && err?.name !== "AbortError") { setT2HubCategoryId(String(selectedOccupationId)); setT2HubLanguageCode(""); } });
+    return () => { active = false; controller.abort(); };
   }, [selectedOccupationId]);
 
   useEffect(() => {
@@ -728,39 +736,13 @@ export default function BookingPage() {
     return () => { active = false; };
   }, [selectedOccupationId, methodology]);
 
-  // Load authoritative live SVP centers for the selected occupation category
-  // and city. A city can have many centers, so no local mirror is consulted.
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!selectedCity) { setCityCenterOptions([]); return; }
-      try {
-        const params = new URLSearchParams({ city: String(selectedCity) });
-        const data: any = await api(`/test-centers?${params.toString()}`);
-        if (!active) return;
-        const rawCenters = Array.isArray(data?.sites) ? data.sites : Array.isArray(data?.test_centers) ? data.test_centers : pickArray(data);
-        const verifiedCenters = mergeVerifiedCityCenterRoster(rawCenters, selectedCity, "78");
-        const normalized = verifiedCenters.map((center: any) => ({
-          siteId: String(center.test_center_id ?? center.id ?? center.site_id ?? ""),
-          name: String(center.test_center_name ?? center.name ?? center.title ?? "").trim(),
-          city: String(center.city ?? center.test_center_city ?? selectedCity).trim(),
-        })).filter((center: any) => center.siteId && center.name);
-        setCityCenterOptions(normalized);
-      } catch (err: any) {
-        if (!active) return;
-        setCityCenterOptions([]);
-        setError(isT2HubSessionMissing(err) ? T2HUB_SESSION_MISSING_MESSAGE : (err?.message || "Failed to load live SVP test centers"));
-      }
-    })();
-    return () => { active = false; };
-  }, [selectedCity]);
-
   // When a date is selected, fetch ALL sessions for that date in one call.
   // Centers are derived from the response — only centers with sessions appear.
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     (async () => {
-      if (!selectedCity || !availableDate || !categoryId) {
+      if (!selectedCity || !availableDate || !categoryId || !t2HubCategoryId) {
         setDateScopedCenters(null);
         setLoadingCenterAvailability(false);
         setSessions([]);
@@ -775,11 +757,23 @@ export default function BookingPage() {
           category_id: String(t2HubCategoryId || categoryId),
           city: String(selectedCity),
           exam_date: availableDate,
-        }).toString()}`);
+        }).toString()}`, { signal: controller.signal });
         if (!active) return;
         const allSessions = Array.isArray(data?.sessions) ? data.sessions : pickArray(data);
         setAllDateSessions(allSessions);
         setSessions(allSessions);
+
+        const rawCenters = Array.isArray(data?.sites)
+          ? data.sites
+          : Array.isArray(data?.test_centers) ? data.test_centers : [];
+        const normalizedCenters = mergeVerifiedCityCenterRoster(rawCenters, selectedCity, "78")
+          .map((center: any) => ({
+            siteId: String(center.test_center_id ?? center.id ?? center.site_id ?? ""),
+            name: String(center.test_center_name ?? center.name ?? center.title ?? "").trim(),
+            city: String(center.city ?? center.test_center_city ?? selectedCity).trim(),
+          }))
+          .filter((center: any) => center.siteId && center.name);
+        setCityCenterOptions(normalizedCenters);
 
         const centerMap = new Map<string, { siteId: string; name: string; city: string; sessionCount: number }>();
         allSessions.forEach((s: any) => {
@@ -805,7 +799,7 @@ export default function BookingPage() {
         setReservationId("");
         setPaymentSession(null);
       } catch (err: any) {
-        if (!active) return;
+        if (!active || err?.name === "AbortError") return;
         setDateScopedCenters([]);
         setSessions([]);
         setAllDateSessions([]);
@@ -814,7 +808,7 @@ export default function BookingPage() {
         if (active) setLoadingCenterAvailability(false);
       }
     })();
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [selectedCity, availableDate, categoryId, t2HubCategoryId]);
 
   // Sessions are already loaded by the date effect above. When the user picks
