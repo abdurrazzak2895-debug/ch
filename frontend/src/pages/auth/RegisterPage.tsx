@@ -178,8 +178,13 @@ export default function RegisterPage() {
     setPassportFile(file);
     if (!file) { setScanStatus("idle"); setScanMessage(""); return; }
     if (!isSupportedPassportImage(file)) {
-      setPassportFile(null);
-      setScanStatus("error"); setScanMessage("Use one JPEG, PNG or WEBP image of the passport biodata page with both MRZ lines. PDFs and combined personal-data documents are not accepted.");
+      if (file.type.toLowerCase().startsWith("image/")) {
+        setScanStatus("done");
+        setScanMessage("Image uploaded for manual review. Automatic OCR is unavailable for this image format; enter the passport fields below and continue for official validation.");
+      } else {
+        setPassportFile(null);
+        setScanStatus("error"); setScanMessage("Upload an image file. The image may be reviewed manually if automatic OCR cannot read it.");
+      }
       return;
     }
     setScanStatus("scanning"); setScanMessage("Reading passport…");

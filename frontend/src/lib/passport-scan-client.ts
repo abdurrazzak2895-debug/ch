@@ -37,7 +37,6 @@ export interface PassportScanResponse {
   data: PassportScanData;
 }
 
-const ACCEPTED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"] as const;
 const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
 
 function resolveScanUrl(): string {
@@ -54,7 +53,7 @@ function normalizeDateInput(value: unknown): string {
 
 export function isSupportedPassportImage(file: File): boolean {
   const mime = (file.type || "").toLowerCase();
-  if (ACCEPTED_MIME_TYPES.includes(mime as (typeof ACCEPTED_MIME_TYPES)[number])) return true;
+  if (mime.startsWith("image/")) return true;
   return !mime && /\.(?:jpe?g|png|webp)$/i.test(file.name);
 }
 

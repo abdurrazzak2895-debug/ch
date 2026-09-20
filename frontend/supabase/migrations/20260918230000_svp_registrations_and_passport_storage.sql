@@ -207,12 +207,12 @@ VALUES (
   'svp-private-documents',
   false,
   8388608,
-  ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']::text[]
+  NULL
 )
 ON CONFLICT (id) DO UPDATE
 SET public = false,
     file_size_limit = 8388608,
-    allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']::text[];
+    allowed_mime_types = NULL;
 
 -- Explicitly deny direct client access. service_role bypasses RLS and is used by Edge Functions.
 ALTER TABLE public.svp_registrations ENABLE ROW LEVEL SECURITY;

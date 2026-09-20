@@ -21,8 +21,7 @@ const MOCK_RECAPTCHA_ENABLED = Deno.env.get("SVP_ENABLE_MOCK_RECAPTCHA") === "tr
 const MOCK_OCR_ENABLED = Deno.env.get("SVP_ENABLE_MOCK_OCR") === "true";
 const BUCKET = "svp-private-documents";
 // The official registration UI accepts PNG/JPG/JPEG and caps the upload at 2 MB.
-const MAX_BYTES = 2 * 1024 * 1024;
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png"]);
+  const MAX_BYTES = 8 * 1024 * 1024;
 const KEY_VERSION = Deno.env.get("REGISTRATION_PII_KEY_VERSION") || "v1";
 
 type Json = Record<string, unknown>;
@@ -166,11 +165,19 @@ function requireOcrConfig() {
 
 async function ensurePrivateDocumentBucket(client: SupabaseClient) {
   const { data, error } = await client.storage.getBucket(BUCKET);
-  if (data) return;
+  if (data) {
+    const { error: updateError } = await client.storage.updateBucket(BUCKET, {
+      public: false,
+      fileSizeLimit: `${MAX_BYTES}`,
+      allowedMimeTypes: null,
+    });
+    if (updateError) throw new Error(`Passport bucket update failed: ${updateError.message}`);
+    return;
+  }
   if (error && !/not found|does not exist/i.test(error.message)) {
     throw new Error(`Passport bucket check failed: ${error.message}`);
   }
-  const { error: createError } = await client.storage.createBucket(BUCKET, { public: false, fileSizeLimit: `${MAX_BYTES}` });
+  const { error: createError } = await client.storage.createBucket(BUCKET, { public: false, fileSizeLimit: `${MAX_BYTES}`, allowedMimeTypes: null });
   if (createError && !/already exists/i.test(createError.message)) {
     throw new Error(`Passport bucket creation failed: ${createError.message}`);
   }
@@ -357,6 +364,27 @@ function mockOcrData(): Json {
   };
 }
 
+function manualReviewOcrData(errorMessage: string): Json {
+  return {
+    passport_number: "",
+    first_name: "",
+    last_name: "",
+    date_of_birth: "",
+    passport_expiration_date: "",
+    national_id: "",
+    sex: "",
+    nationality_code: "",
+    country_code: "",
+    country_id: null,
+    nationality_id: null,
+    issuing_country: "",
+    confidence: "low",
+    mrz_present: false,
+    manual_review_required: true,
+    ocr_error: errorMessage.slice(0, 240),
+  };
+}
+
 async function officialMultipartRequest(path: string, form: FormData): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120_000);
@@ -407,7 +435,13 @@ async function handleOfficialMultipart(req: Request, client: SupabaseClient, acc
 }
 
 function extensionFor(mime: string): string {
-  return mime === "application/pdf" ? "pdf" : mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("image/")) return (mime.slice("image/".length).split("+")[0] || "img").replace(/[^a-z0-9]/gi, "").slice(0, 12) || "img";
+  return "bin";
+}
+
+function isImageMime(mime: string): boolean {
+  return /^image\/[a-z0-9.+-]+$/i.test(mime);
 }
 
 function safeFileName(kind: string, mime: string): string {
@@ -432,19 +466,32 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
   if (!contentType.toLowerCase().includes("multipart/form-data")) return json({ error: "multipart/form-data required" }, 415);
   const form = await req.formData();
   const uploaded = form.get("file");
-  if (!(uploaded instanceof File)) return json({ error: "Passport file is required" }, 400);
-  if (!ALLOWED_MIME.has(uploaded.type)) return json({ error: "Unsupported file type" }, 415);
-  if (uploaded.size <= 0 || uploaded.size > MAX_BYTES) return json({ error: "File must be between 1 byte and 2 MB" }, 413);
+  if (!(uploaded instanceof File)) return json({ error: "Passport image is required" }, 400);
+  if (!isImageMime(uploaded.type)) return json({ error: "Upload an image file" }, 415);
+  if (uploaded.size <= 0 || uploaded.size > MAX_BYTES) return json({ error: "Image must be between 1 byte and 8 MB" }, 413);
 
   const bytes = new Uint8Array(await uploaded.arrayBuffer());
   const checksum = await sha256(bytes);
   const mockRequested = req.headers.get("x-ocr-test-mode") === "mock";
   if (mockRequested && !MOCK_OCR_ENABLED) return json({ error: "Mock OCR is disabled" }, 403);
-  const ocr = mockRequested ? mockOcrData() : await runOcr(uploaded);
+  let ocr: Json;
+  let manualReviewRequired = false;
+  if (mockRequested) {
+    ocr = mockOcrData();
+  } else {
+    try {
+      ocr = await runOcr(uploaded);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Official passport recognition failed";
+      manualReviewRequired = true;
+      ocr = manualReviewOcrData(message);
+      console.warn(JSON.stringify({ event: "svp.ocr.manual_review_fallback", bytes: uploaded.size, reason: message.slice(0, 240) }));
+    }
+  }
   if (mockRequested) console.warn(JSON.stringify({ event: "svp.ocr.mock_used", bytes: uploaded.size }));
   const idempotencyKey = String(req.headers.get("idempotency-key") || form.get("idempotency_key") || crypto.randomUUID()).trim();
   if (idempotencyKey.length > 160) return json({ error: "idempotency_key is too long" }, 400);
-  const passportHash = await hmacPassport(normalizePassport(ocr.passport_number));
+  const passportHash = await hmacPassport(normalizePassport(ocr.passport_number) || `UNREADABLE:${checksum}`);
   const registrationId = crypto.randomUUID();
   const path = `${account.id}/${registrationId}/passport/${safeFileName("passport", uploaded.type)}`;
 
@@ -471,7 +518,7 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
     passport_number_hash: passportHash,
     entry_source: "ocr",
     ocr_confidence: ocr.confidence === "high" ? 0.95 : ocr.confidence === "medium" ? 0.75 : 0.4,
-    ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition",
+    ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition",
     idempotency_key: idempotencyKey,
   });
   if (registrationError) {
@@ -496,7 +543,7 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
           registration_id: existing?.id ?? null,
           document: null,
           ocr,
-          ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition",
+          ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition",
         },
       }, 200);
     }
@@ -522,8 +569,8 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
     throw new Error(`Passport metadata failed: ${documentError.message}`);
   }
 
-  await audit(client, registrationId, account.id, "registration.ocr_scanned", { document_kind: "PASSPORT", ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition" }, "DRAFT");
-  return json({ ok: true, data: { registration_id: registrationId, document, ocr, ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition" } }, 201);
+  await audit(client, registrationId, account.id, manualReviewRequired ? "registration.ocr_manual_review_required" : "registration.ocr_scanned", { document_kind: "PASSPORT", ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition" }, "DRAFT");
+  return json({ ok: true, data: { registration_id: registrationId, document, ocr, manual_review_required: manualReviewRequired, ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition" } }, 201);
 }
 
 async function handleStore(req: Request, client: SupabaseClient, account: AuthAccount) {
