@@ -45,6 +45,39 @@ function getSupabase() {
   );
 }
 
+const sessionEncoder = new TextEncoder();
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function decryptVaultSecret(value: string): Promise<string> {
+  const masterSecret = Deno.env.get("SESSION_ENCRYPTION_KEY");
+  if (!masterSecret) throw new Error("SESSION_ENCRYPTION_KEY is not configured");
+
+  const separator = value.indexOf(".");
+  if (separator <= 0) throw new Error("Invalid encrypted T2Hub secret format");
+
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    sessionEncoder.encode(masterSecret),
+  );
+  const key = await crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"],
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(value.slice(0, separator)) },
+    key,
+    base64ToBytes(value.slice(separator + 1)),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 // ΓöÇΓöÇ SVP API helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const SVP_BASE = Deno.env.get("SVP_BASE_URL") || "https://svp-international-api.pacc.sa";
 const SVP_LOCALE = "en";
@@ -486,11 +519,7 @@ async function fetchT2HubSessionPage(appPath: string) {
   return { res, html, keyRaw: extractT2HubKey(html) };
 }
 
-/**
- * Build a t2hub session from the T2HUB_SESSION_KEY and T2HUB_SESSION_COOKIE
- * environment variables. These are set by the refresh-t2hub-session script
- * after a successful Playwright login and capture.
- */
+/** Build a fallback T2Hub session from the legacy environment secrets. */
 function getEnvSession(): NonNullable<typeof t2hubSession> | null {
   const keyRaw = Deno.env.get("T2HUB_SESSION_KEY") || "";
   const cookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
@@ -504,19 +533,72 @@ function getEnvSession(): NonNullable<typeof t2hubSession> | null {
   };
 }
 
+/**
+ * Load the newest active session from the encrypted database vault. Plaintext
+ * cookies, keys, and CSRF values exist only in this Edge Function isolate.
+ */
+async function getVaultSession(): Promise<NonNullable<typeof t2hubSession> | null> {
+  try {
+    const supabase = getSupabase();
+    const { data: account, error: accountError } = await supabase
+      .from("t2hub_accounts")
+      .select("id")
+      .eq("enabled", true)
+      .eq("status", "active")
+      .order("last_refresh_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (accountError || !account) return null;
+
+    const { data: stored, error: sessionError } = await supabase
+      .from("t2hub_sessions")
+      .select("encrypted_cookie,encrypted_session_key,encrypted_csrf,expires_at,refreshed_at")
+      .eq("account_id", account.id)
+      .maybeSingle();
+    if (sessionError || !stored?.encrypted_cookie || !stored.encrypted_session_key) return null;
+
+    const [cookie, keyRaw, csrfToken] = await Promise.all([
+      decryptVaultSecret(stored.encrypted_cookie),
+      decryptVaultSecret(stored.encrypted_session_key),
+      stored.encrypted_csrf ? decryptVaultSecret(stored.encrypted_csrf) : Promise.resolve(""),
+    ]);
+    if (!cookie || !keyRaw) return null;
+
+    const expiresAt = stored.expires_at ? Date.parse(stored.expires_at) : Date.now() + 30 * 60 * 1000;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
+    return {
+      keyRaw,
+      cookie,
+      csrfToken,
+      appPath: T2HUB_APP_PATH,
+      expiresAt,
+    };
+  } catch (error) {
+    console.error("T2Hub vault session load failed", error instanceof Error ? error.message : "unknown error");
+    return null;
+  }
+}
+
 async function getT2HubSession() {
   if (t2hubSession && t2hubSession.expiresAt > Date.now()) return t2hubSession;
 
   // 1. Try caller-provided headers (already handled in t2hubFetch/t2hubPost)
   // 2. Try in-memory cache
-  // 3. Try env var session (set by refresh script)
+  // 3. Try the encrypted database vault
+  const vaultSession = await getVaultSession();
+  if (vaultSession) {
+    t2hubSession = vaultSession;
+    return t2hubSession;
+  }
+
+  // 4. Keep legacy env secrets as a safe fallback during migration.
   const envSession = getEnvSession();
   if (envSession) {
     t2hubSession = envSession;
     return t2hubSession;
   }
 
-  // 4. Try fetching landing page (works only if the page exposes __sk)
+  // 5. Try fetching landing page (works only if the page exposes __sk)
   const appPaths = [T2HUB_APP_PATH, `${T2HUB_APP_PATH}/`, `${T2HUB_APP_PATH}/agent/login`];
   let lastStatus = 0;
   for (const appPath of appPaths) {
@@ -1054,10 +1136,12 @@ Deno.serve(async (req) => {
       const envKey = Deno.env.get("T2HUB_SESSION_KEY") || "";
       const envCookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
       const cached = t2hubSession;
+      const vault = await getVaultSession();
       return json({
         env: { hasKey: !!envKey, hasCookie: !!envCookie, keyLen: envKey.length, cookieLen: envCookie.length },
         cache: cached ? { hasKey: !!cached.keyRaw, hasCookie: !!cached.cookie, expiresAt: new Date(cached.expiresAt).toISOString() } : null,
-        status: envKey && envCookie ? "ok" : cached ? "cached" : "missing",
+        vault: vault ? { hasKey: true, hasCookie: true, hasCsrf: !!vault.csrfToken, expiresAt: new Date(vault.expiresAt).toISOString() } : null,
+        status: vault ? "vault" : envKey && envCookie ? "env-fallback" : cached ? "cached" : "missing",
       });
     }
 
