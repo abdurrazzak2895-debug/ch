@@ -624,6 +624,18 @@ async function getT2HubSession() {
   };
 }
 
+async function retryWithEnvSession<T>(
+  current: NonNullable<typeof t2hubSession>,
+  operation: (session: NonNullable<typeof t2hubSession>) => Promise<T>,
+): Promise<T> {
+  const fallback = getEnvSession();
+  if (!fallback || fallback.cookie === current.cookie) {
+    throw new Error("No different T2Hub fallback session is available");
+  }
+  t2hubSession = fallback;
+  return operation(fallback);
+}
+
 // t2hub uses Laravel's Crypt::encrypt with AES-256-GCM. The encrypted envelope
 // has `{p, iv}` where both are base64-encoded. The body is the base64 string
 // itself (Content-Encoding: gzip was already inflated by Deno's fetch), so
@@ -751,6 +763,13 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
     lastT2HubCookie = session.cookie;
     return data;
   } catch (err: any) {
+    try {
+      const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJson(path, fallback));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the existing decrypt/session refresh retry below.
+    }
     if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
       t2hubSession = null;
       const fresh = await getT2HubSession();
@@ -782,6 +801,13 @@ async function t2hubPost(path: string, body: unknown, req: Request): Promise<any
     lastT2HubCookie = session.cookie;
     return data;
   } catch (err: any) {
+    try {
+      const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJsonPost(path, body, fallback));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the existing decrypt/session refresh retry below.
+    }
     if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
       t2hubSession = null;
       const fresh = await getT2HubSession();

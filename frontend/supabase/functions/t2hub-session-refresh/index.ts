@@ -392,6 +392,35 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     const body = await req.json();
+    if (body.sync_env_session === true) {
+      const loginIdentifier = String(
+        body.login_identifier ?? Deno.env.get("T2HUB_TEST_MOBILE") ?? "",
+      ).trim();
+      const cookieHeader = Deno.env.get("T2HUB_SESSION_COOKIE") ?? "";
+      const sessionKey = Deno.env.get("T2HUB_SESSION_KEY") ?? "";
+      const csrfCookie = Deno.env.get("T2HUB_SESSION_CSRF") ?? "";
+      const password = Deno.env.get("T2HUB_TEST_PASSWORD") ?? "";
+      if (!loginIdentifier || !cookieHeader || !sessionKey || !password) {
+        return json({ error: "Managed T2Hub session or test credentials are not configured" }, 400);
+      }
+      const saved = await saveEncryptedSession(loginIdentifier, {
+        cookieHeader,
+        sessionKey,
+        csrfCookie,
+        finalUrl: DEFAULT_APP_URL,
+        status: 200,
+      }, password);
+      return json({
+        ok: true,
+        synced: true,
+        saved,
+        cookie_length: cookieHeader.length,
+        has_session_key: true,
+        has_csrf_cookie: Boolean(csrfCookie),
+        note: "Managed session values were copied into the encrypted vault without returning secrets.",
+      });
+    }
+
     const useConfiguredCredentials = body.use_test_credentials === true;
     const mobile = String(
       useConfiguredCredentials
