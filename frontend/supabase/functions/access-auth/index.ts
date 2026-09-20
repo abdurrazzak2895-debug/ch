@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { create, verify, getNumericDate } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
-import { FULL_PHONE_ERROR, normalizeFullPhone } from "../_shared/phone.ts";
+import { BANGLADESH_PHONE_ERROR, normalizeBangladeshPhone } from "../_shared/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -230,7 +230,7 @@ serve(async (req) => {
     if (path === "/register" && req.method === "POST") {
       const { name, email, phone: phoneInput, password } = await req.json();
       const normalizedEmail = String(email || "").trim().toLowerCase();
-      const phone = normalizeFullPhone(phoneInput);
+      const phone = normalizeBangladeshPhone(phoneInput);
       if (!String(name || "").trim() || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
         return new Response(JSON.stringify({ message: "Valid name and email are required" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -242,7 +242,7 @@ serve(async (req) => {
         });
       }
       if (!phone) {
-        return new Response(JSON.stringify({ message: FULL_PHONE_ERROR }), {
+        return new Response(JSON.stringify({ message: BANGLADESH_PHONE_ERROR }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

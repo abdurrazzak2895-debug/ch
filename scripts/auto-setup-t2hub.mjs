@@ -60,7 +60,7 @@ async function loginT2Hub(env) {
   console.log('\n[1/4] Logging into T2Hub...');
   const email = env.T2HUB_EMAIL;
   const password = env.T2HUB_PASSWORD;
-  const loginUrl = env.T2HUB_LOGIN_URL || 'https://t2hub.app/takamol/agent/login';
+  const loginUrl = env.T2HUB_LOGIN_URL || 'https://takamol.t2hub.app/takamol/agent/login';
   const baseUrl = env.T2HUB_URL || 'https://takamol.t2hub.app';
 
   if (!email || !password) {

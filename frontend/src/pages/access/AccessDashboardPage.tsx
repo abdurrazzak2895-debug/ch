@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Activity, Building2, CircleUserRound, Database, FileSliders,
+  Activity, AlertTriangle, Building2, CircleUserRound, Database, FileSliders,
   LayoutDashboard, LogOut, Megaphone, Plus, RefreshCw, SearchCheck, Server, ShieldCheck, Users, WalletCards,
 } from "lucide-react";
 import { useAccessAuth } from "@/contexts/AccessAuthContext";
@@ -26,7 +26,7 @@ interface SvpLoginInfo {
 }
 
 interface AdminDashboardData {
-  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; activeSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; bookingCreditCost: number; totalWalletBalance: number };
+  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; activeSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; lifetimeBookingSuccesses?: number; lifetimeBookingFailures?: number; bookingCreditCost: number; totalWalletBalance: number };
   agencies: Array<{
     id: string; name: string; email: string; status: string; createdAt?: string | null;
     userCount: number; svpAccountCount: number; activeSvpCount: number; completedBookings: number; pendingBookings: number; failedBookings: number; paidPayments: number; totalWalletBalance: number;
@@ -38,9 +38,12 @@ interface AdminDashboardData {
       recentReservations: Array<{ id: string; status: string; completed: boolean; createdAt: string | null }>;
     }>;
   }>;
+  recentBookings: Array<{ id: string; svpLogin: string; accountName: string; agencyName?: string | null; status: string; completed: boolean; createdAt?: string | null }>;
+  bookingEvents: Array<{ id: string; accountName: string; agencyName?: string | null; operation: string; route: string; reservationId?: string | null; outcome: "success" | "failure"; httpStatus?: number | null; errorCode?: string | null; status?: string | null; message?: string | null; createdAt?: string | null }>;
   recentPayments: Array<{ id: string; reservationId?: string | null; accountName: string; agencyName?: string | null; svpLogin: string; status: string; paid: boolean; amount?: number | null; currency?: string | null; createdAt?: string | null }>;
   recentAccounts: Account[];
-  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; truncated: boolean; refreshedAt: string };
+  t2hubAlerts: Array<{ id: string; accountId: string; accountName: string; loginIdentifier: string; severity: string; message: string; occurredAt: string }>;
+  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; expiredAccessSessions?: number; expiredRefreshSessions?: number; reauthRequired?: number; truncated: boolean; refreshedAt: string; source?: string; reservationsFetched?: number; paymentsFetched?: number };
   bookingCreditCost: number;
 }
 
@@ -52,6 +55,20 @@ function formatDate(value?: string) {
   if (!value) return "Recently";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Recently" : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not available" : date.toLocaleString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
+function statusTone(status: string, completed = false) {
+  if (completed || /complete|confirm|book|success|paid|active|ready/i.test(status)) return "positive";
+  if (/fail|cancel|expire|reject|error|void/i.test(status)) return "negative";
+  return "pending";
 }
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
@@ -221,7 +238,48 @@ export default function AccessDashboardPage() {
           </div>
         </section>
 
+        {isAdmin && adminDashboard && (
+          <section className="ap-live-overview">
+            <div className="ap-live-overview__head">
+              <div className="ap-live-overview__identity">
+                <span className="ap-live-overview__pulse" />
+                <div><small>LIVE OPERATIONS</small><h2>SVP API command centre</h2></div>
+              </div>
+              <div className="ap-live-overview__meta">
+                <span className="ap-live-source">{adminDashboard.live.source === "svp-api" ? "LIVE API" : "DATA SOURCE UNKNOWN"}</span>
+                <span>Updated {formatDateTime(adminDashboard.live.refreshedAt)}</span>
+              </div>
+            </div>
+            <div className="ap-live-overview__grid">
+              <div><small>SESSION ACCOUNTS</small><strong>{adminDashboard.live.sessionAccounts}</strong><span>{adminDashboard.live.syncedAccounts} synced successfully</span></div>
+              <div><small>BOOKING LOGS</small><strong>{adminDashboard.live.reservationsFetched ?? adminDashboard.stats.completedBookings}</strong><span>Fresh reservations from SVP</span></div>
+              <div><small>PAYMENT LOGS</small><strong>{adminDashboard.live.paymentsFetched ?? adminDashboard.stats.successfulPayments}</strong><span>Fresh payment records from SVP</span></div>
+              <div className={adminDashboard.live.syncFailures > 0 ? "ap-live-overview__metric--bad" : "ap-live-overview__metric--good"}><small>SYNC HEALTH</small><strong>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.reauthRequired ?? adminDashboard.live.syncFailures} re-auth required` : "Healthy"}</strong><span>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.expiredRefreshSessions ?? 0} refresh tokens expired` : "All selected sessions responded"}</span></div>
+            </div>
+          </section>
+        )}
+
         {error && <div className="ap-error">{error}</div>}
+
+        {isAdmin && (adminDashboard?.t2hubAlerts?.length ?? 0) > 0 && (
+          <section className="ap-panel ap-t2hub-alerts" role="alert">
+            <header>
+              <div className="ap-t2hub-alerts__title"><AlertTriangle /><div><small>SYSTEM ALERT</small><h2>T2Hub session refresh failures</h2></div></div>
+              <span className="ap-t2hub-alerts__count">{adminDashboard?.t2hubAlerts.length} unresolved</span>
+            </header>
+            <div className="ap-t2hub-alerts__list">
+              {adminDashboard?.t2hubAlerts.map((alert) => (
+                <article className="ap-t2hub-alert" key={alert.id}>
+                  <div>
+                    <strong>{alert.accountName}</strong>
+                    <small>{alert.loginIdentifier || "Account login hidden"} · {new Date(alert.occurredAt).toLocaleString("en-GB")}</small>
+                  </div>
+                  <p>{alert.message}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="ap-stats">
           {stats.map(([label, value, note, tone]) => (
@@ -244,6 +302,14 @@ export default function AccessDashboardPage() {
             <Link className="ap-infra__card" to="/access/test-centers">
               <Database /><div><small>TEST CENTERS</small><strong>Review</strong></div>
             </Link>
+          </section>
+        )}
+
+        {isAdmin && adminDashboard && (
+          <section className="ap-lifetime-strip">
+            <div><small>LIFETIME BOOKING SUCCESS</small><strong>{adminDashboard.stats.lifetimeBookingSuccesses ?? 0}</strong><span>Recorded by the portal ledger</span></div>
+            <div><small>LIFETIME BOOKING FAILURES</small><strong>{adminDashboard.stats.lifetimeBookingFailures ?? 0}</strong><span>Failures retained for audit</span></div>
+            <div><small>SESSION RECOVERY</small><strong>{adminDashboard.live.reauthRequired ?? 0}</strong><span>Accounts requiring fresh SVP login</span></div>
           </section>
         )}
 
@@ -310,6 +376,49 @@ export default function AccessDashboardPage() {
                   </details>
                 ))}
                 {!adminDashboard.agencies.length && <p className="ap-muted">No agencies found.</p>}
+              </div>
+            </section>
+
+            <section className="ap-panel ap-live-bookings">
+              <header>
+                <div><small>LIVE SVP RESERVATIONS</small><h2>Booking activity log</h2></div>
+                <span className="ap-live-note">Source: SVP API · {adminDashboard.live.truncated ? "latest 50 sessions" : "all active sessions"}</span>
+              </header>
+              <div className="ap-booking-table">
+                <div className="ap-booking-row ap-booking-row--head">
+                  <span>Reservation</span><span>Account</span><span>Agency</span><span>SVP login</span><span>Last update</span><span>Status</span>
+                </div>
+                {adminDashboard.recentBookings?.map((booking) => (
+                  <div className="ap-booking-row" key={`${booking.svpLogin}:${booking.id}`}>
+                    <span><strong>#{booking.id}</strong><small>{booking.completed ? "Completed reservation" : "Open reservation"}</small></span>
+                    <span>{booking.accountName}</span>
+                    <span>{booking.agencyName || "Independent"}</span>
+                    <span className="ap-mono">{booking.svpLogin}</span>
+                    <time>{formatDateTime(booking.createdAt || undefined)}</time>
+                    <span className={`ap-log-status ap-log-status--${statusTone(booking.status, booking.completed)}`}>{booking.completed ? "COMPLETED" : booking.status || "UNKNOWN"}</span>
+                  </div>
+                ))}
+                {!adminDashboard.recentBookings?.length && <p className="ap-muted">No reservation records returned by the live SVP API.</p>}
+              </div>
+            </section>
+
+            <section className="ap-panel ap-lifetime-events">
+              <header>
+                <div><small>PORTAL BOOKING LEDGER</small><h2>Lifetime success and failure history</h2></div>
+                <span className="ap-live-note">Durable records · latest 100 events</span>
+              </header>
+              <div className="ap-event-table">
+                <div className="ap-event-row ap-event-row--head"><span>Account</span><span>Operation</span><span>Reservation</span><span>Recorded</span><span>Result</span></div>
+                {adminDashboard.bookingEvents?.slice(0, 20).map((event) => (
+                  <div className="ap-event-row" key={event.id}>
+                    <span><strong>{event.accountName}</strong><small>{event.agencyName || "Independent"}</small></span>
+                    <span><strong>{event.operation}</strong><small>{event.route}</small></span>
+                    <span>{event.reservationId ? `#${event.reservationId}` : "-"}</span>
+                    <time>{formatDateTime(event.createdAt || undefined)}</time>
+                    <span className={`ap-log-status ap-log-status--${event.outcome === "success" ? "positive" : "negative"}`}>{event.outcome === "success" ? "SUCCESS" : event.errorCode || "FAILED"}</span>
+                  </div>
+                ))}
+                {!adminDashboard.bookingEvents?.length && <p className="ap-muted">No portal booking events have been recorded yet.</p>}
               </div>
             </section>
 

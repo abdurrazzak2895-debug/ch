@@ -188,7 +188,7 @@ export function getSessionStatus() {
 
 /**
  * Return the cookie header string suitable for passing to svp-proxy
- * via the x-t2hub-cookie request header.
+ * via the generic x-session-cookie request header.
  */
 export function getCookieHeader() {
   const session = loadSession();
@@ -201,14 +201,14 @@ export function getCookieHeader() {
 
 /**
  * Return the full set of headers needed for t2hub API calls.
- * Pass these as x-t2hub-cookie and x-t2hub-key to svp-proxy.
+ * Pass these as x-session-cookie and x-session-key to svp-proxy.
  */
 export function getHeaders() {
   const session = loadSession();
   if (!session) return null;
   return {
-    'x-t2hub-cookie': getCookieHeader(),
-    'x-t2hub-key': session.encryptionKey || '',
+    'x-session-cookie': getCookieHeader(),
+    'x-session-key': session.encryptionKey || '',
   };
 }
 

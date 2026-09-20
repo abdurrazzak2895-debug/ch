@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "SVP Booking Bangladesh",
+    "slug": "svp-booking-bangladesh",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "svpbooking",
+    "android": { "package": "bd.t2hub.svpbooking", "versionCode": 1, "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#0a1628" } },
+    "extra": { "apiBaseUrl": "https://xklwzkraobxetxdcysun.supabase.co/functions/v1" }
+  }
+}

@@ -18,13 +18,13 @@ import {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type, x-t2hub-cookie, x-t2hub-key",
-  "Access-Control-Expose-Headers": "x-t2hub-cookie",
+    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type, x-session-cookie, x-session-key",
+  "Access-Control-Expose-Headers": "x-session-cookie",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
 // Code returned in the outer error response when a t2hub-backed route is
-// called without x-t2hub-cookie + x-t2hub-key. The booking page detects
+// called without the session cookie and key headers. The booking page detects
 // this and triggers a one-time t2hub login bridge to capture the
 // caller's own t2hub session material.
 export const T2HUB_SESSION_MISSING_CODE = "T2HUB_SESSION_MISSING";
@@ -34,7 +34,7 @@ function json(data: unknown, status = 200) {
     ...corsHeaders,
     "Content-Type": "application/json",
   };
-  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -43,6 +43,70 @@ function getSupabase() {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+}
+
+async function recordBookingEvent(input: {
+  accountId?: string | null;
+  operation: string;
+  route: string;
+  reservationId?: string | null;
+  outcome: "success" | "failure";
+  httpStatus?: number | null;
+  errorCode?: string | null;
+  status?: string | null;
+  message?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  try {
+    const { error } = await getSupabase().from("svp_booking_events").insert({
+      account_id: input.accountId || null,
+      operation: input.operation,
+      route: input.route,
+      reservation_id: input.reservationId || null,
+      outcome: input.outcome,
+      http_status: input.httpStatus ?? null,
+      error_code: input.errorCode || null,
+      status: input.status || null,
+      message: input.message || null,
+      metadata: input.metadata || {},
+    });
+    if (error) console.error("booking event persistence failed", error.message);
+  } catch (error) {
+    console.error("booking event persistence threw", error);
+  }
+}
+
+const sessionEncoder = new TextEncoder();
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function decryptVaultSecret(value: string): Promise<string> {
+  const masterSecret = Deno.env.get("SESSION_ENCRYPTION_KEY");
+  if (!masterSecret) throw new Error("SESSION_ENCRYPTION_KEY is not configured");
+
+  const separator = value.indexOf(".");
+  if (separator <= 0) throw new Error("Invalid encrypted T2Hub secret format");
+
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    sessionEncoder.encode(masterSecret),
+  );
+  const key = await crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"],
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(value.slice(0, separator)) },
+    key,
+    base64ToBytes(value.slice(separator + 1)),
+  );
+  return new TextDecoder().decode(plaintext);
 }
 
 // ΓöÇΓöÇ SVP API helper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -348,9 +412,14 @@ let t2hubSession:
     }
   | null = null;
 
+// Occupations change infrequently. Reuse the catalog inside a warm Edge
+// Function isolate so every booking page does not repeat the same upstream
+// request. The short TTL keeps changes visible without making the catalog stale.
+let t2hubOccupationCache: { expiresAt: number; data: any } | null = null;
+
 // After every t2hub call we stash the most recent cookies here so the
 // response builder can echo them back to the caller in
-// `x-t2hub-cookie`. The caller is responsible for keeping its own copy in
+// the session-cookie response header. The caller is responsible for keeping its own copy in
 // sync ΓÇö these cookies rotate on every t2hub response.
 let lastT2HubCookie = "";
 
@@ -363,17 +432,17 @@ let lastT2HubCookie = "";
 //
 // t2hub is a stateful Laravel app ΓÇö a fresh server has no session. Callers
 // MUST pass their logged-in t2hub cookies (and the session key from
-// `window.__sk`) via the `x-t2hub-cookie` and `x-t2hub-key` request headers
+// via the generic session cookie and key request headers
 // so we can hit the read-only API on their behalf. After each call we return
-// any rotated cookies in the `x-t2hub-cookie` response header so the caller
+// any rotated cookies in the `x-session-cookie` response header so the caller
 // can keep its own copy fresh.
-const T2HUB_KEY_HEADER = "x-t2hub-key";
-const T2HUB_COOKIE_HEADER = "x-t2hub-cookie";
-const T2HUB_RESPONSE_COOKIE_HEADER = "x-t2hub-cookie";
+const SESSION_KEY_HEADER = "x-session-key";
+const SESSION_COOKIE_HEADER = "x-session-cookie";
+const SESSION_RESPONSE_COOKIE_HEADER = "x-session-cookie";
 
 function t2HubHeadersFromRequest(req: Request): { keyRaw: string; cookie: string } | null {
-  const keyRaw = req.headers.get(T2HUB_KEY_HEADER)?.trim() || "";
-  const cookie = req.headers.get(T2HUB_COOKIE_HEADER)?.trim() || "";
+  const keyRaw = req.headers.get(SESSION_KEY_HEADER)?.trim() || "";
+  const cookie = req.headers.get(SESSION_COOKIE_HEADER)?.trim() || "";
   if (!keyRaw || !cookie) return null;
   return { keyRaw, cookie };
 }
@@ -481,11 +550,7 @@ async function fetchT2HubSessionPage(appPath: string) {
   return { res, html, keyRaw: extractT2HubKey(html) };
 }
 
-/**
- * Build a t2hub session from the T2HUB_SESSION_KEY and T2HUB_SESSION_COOKIE
- * environment variables. These are set by the refresh-t2hub-session script
- * after a successful Playwright login and capture.
- */
+/** Build a fallback T2Hub session from the legacy environment secrets. */
 function getEnvSession(): NonNullable<typeof t2hubSession> | null {
   const keyRaw = Deno.env.get("T2HUB_SESSION_KEY") || "";
   const cookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
@@ -499,19 +564,112 @@ function getEnvSession(): NonNullable<typeof t2hubSession> | null {
   };
 }
 
+/**
+ * Load the newest active session from the encrypted database vault. Plaintext
+ * cookies, keys, and CSRF values exist only in this Edge Function isolate.
+ */
+async function getVaultSession(): Promise<NonNullable<typeof t2hubSession> | null> {
+  try {
+    const supabase = getSupabase();
+    const { data: account, error: accountError } = await supabase
+      .from("t2hub_accounts")
+      .select("id")
+      .eq("enabled", true)
+      .eq("status", "active")
+      .order("last_refresh_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (accountError || !account) return null;
+
+    const { data: stored, error: sessionError } = await supabase
+      .from("t2hub_sessions")
+      .select("encrypted_cookie,encrypted_session_key,encrypted_csrf,expires_at,refreshed_at")
+      .eq("account_id", account.id)
+      .maybeSingle();
+    if (sessionError || !stored?.encrypted_cookie || !stored.encrypted_session_key) return null;
+
+    const [cookie, keyRaw, csrfToken] = await Promise.all([
+      decryptVaultSecret(stored.encrypted_cookie),
+      decryptVaultSecret(stored.encrypted_session_key),
+      stored.encrypted_csrf ? decryptVaultSecret(stored.encrypted_csrf) : Promise.resolve(""),
+    ]);
+    if (!cookie || !keyRaw) return null;
+
+    const expiresAt = stored.expires_at ? Date.parse(stored.expires_at) : Date.now() + 30 * 60 * 1000;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
+    return {
+      keyRaw,
+      cookie,
+      csrfToken,
+      appPath: T2HUB_APP_PATH,
+      expiresAt,
+    };
+  } catch (error) {
+    console.error("T2Hub vault session load failed", error instanceof Error ? error.message : "unknown error");
+    return null;
+  }
+}
+
+async function getAlternateVaultSession(
+  current: NonNullable<typeof t2hubSession>,
+): Promise<NonNullable<typeof t2hubSession> | null> {
+  try {
+    const supabase = getSupabase();
+    const { data: accounts, error: accountError } = await supabase
+      .from("t2hub_accounts")
+      .select("id")
+      .eq("enabled", true)
+      .eq("status", "active")
+      .order("last_refresh_at", { ascending: false });
+    if (accountError || !accounts?.length) return null;
+
+    for (const account of accounts) {
+      const { data: stored } = await supabase
+        .from("t2hub_sessions")
+        .select("encrypted_cookie,encrypted_session_key,encrypted_csrf,expires_at")
+        .eq("account_id", account.id)
+        .maybeSingle();
+      if (!stored?.encrypted_cookie || !stored.encrypted_session_key) continue;
+
+      try {
+        const [cookie, keyRaw, csrfToken] = await Promise.all([
+          decryptVaultSecret(stored.encrypted_cookie),
+          decryptVaultSecret(stored.encrypted_session_key),
+          stored.encrypted_csrf ? decryptVaultSecret(stored.encrypted_csrf) : Promise.resolve(""),
+        ]);
+        const expiresAt = stored.expires_at ? Date.parse(stored.expires_at) : Date.now() + 30 * 60 * 1000;
+        if (!cookie || !keyRaw || cookie === current.cookie || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue;
+        return { keyRaw, cookie, csrfToken, appPath: T2HUB_APP_PATH, expiresAt };
+      } catch {
+        // One malformed or rotated account must not prevent the next account.
+      }
+    }
+  } catch (error) {
+    console.error("T2Hub alternate vault session load failed", error instanceof Error ? error.message : "unknown error");
+  }
+  return null;
+}
+
 async function getT2HubSession() {
   if (t2hubSession && t2hubSession.expiresAt > Date.now()) return t2hubSession;
 
   // 1. Try caller-provided headers (already handled in t2hubFetch/t2hubPost)
   // 2. Try in-memory cache
-  // 3. Try env var session (set by refresh script)
+  // 3. Try the encrypted database vault
+  const vaultSession = await getVaultSession();
+  if (vaultSession) {
+    t2hubSession = vaultSession;
+    return t2hubSession;
+  }
+
+  // 4. Keep legacy env secrets as a safe fallback during migration.
   const envSession = getEnvSession();
   if (envSession) {
     t2hubSession = envSession;
     return t2hubSession;
   }
 
-  // 4. Try fetching landing page (works only if the page exposes __sk)
+  // 5. Try fetching landing page (works only if the page exposes __sk)
   const appPaths = [T2HUB_APP_PATH, `${T2HUB_APP_PATH}/`, `${T2HUB_APP_PATH}/agent/login`];
   let lastStatus = 0;
   for (const appPath of appPaths) {
@@ -532,9 +690,31 @@ async function getT2HubSession() {
   throw {
     statusCode: 503,
     code: T2HUB_SESSION_MISSING_CODE,
-    message: "t2hub session has not been provided. Run the refresh-t2hub-session script or pass x-t2hub-cookie + x-t2hub-key headers.",
+    message: "A session has not been provided. Run the session refresh or pass the session cookie and key headers.",
     details: { status: lastStatus || undefined },
   };
+}
+
+async function retryWithEnvSession<T>(
+  current: NonNullable<typeof t2hubSession>,
+  operation: (session: NonNullable<typeof t2hubSession>) => Promise<T>,
+): Promise<T> {
+  const fallback = getEnvSession();
+  if (!fallback || fallback.cookie === current.cookie) {
+    throw new Error("No different T2Hub fallback session is available");
+  }
+  t2hubSession = fallback;
+  return operation(fallback);
+}
+
+async function retryWithAlternateVaultSession<T>(
+  current: NonNullable<typeof t2hubSession>,
+  operation: (session: NonNullable<typeof t2hubSession>) => Promise<T>,
+): Promise<T> {
+  const alternate = await getAlternateVaultSession(current);
+  if (!alternate) throw new Error("No alternate vault session is available");
+  t2hubSession = alternate;
+  return operation(alternate);
 }
 
 // t2hub uses Laravel's Crypt::encrypt with AES-256-GCM. The encrypted envelope
@@ -664,6 +844,20 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
     lastT2HubCookie = session.cookie;
     return data;
   } catch (err: any) {
+    try {
+      const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJson(path, alternate));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the legacy env fallback below.
+    }
+    try {
+      const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJson(path, fallback));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the existing decrypt/session refresh retry below.
+    }
     if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
       t2hubSession = null;
       const fresh = await getT2HubSession();
@@ -695,6 +889,20 @@ async function t2hubPost(path: string, body: unknown, req: Request): Promise<any
     lastT2HubCookie = session.cookie;
     return data;
   } catch (err: any) {
+    try {
+      const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJsonPost(path, body, alternate));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the legacy env fallback below.
+    }
+    try {
+      const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJsonPost(path, body, fallback));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the existing decrypt/session refresh retry below.
+    }
     if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
       t2hubSession = null;
       const fresh = await getT2HubSession();
@@ -711,7 +919,7 @@ function jsonWithT2HubCookie(data: unknown, status = 200) {
     ...corsHeaders,
     "Content-Type": "application/json",
   };
-  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -1049,10 +1257,12 @@ Deno.serve(async (req) => {
       const envKey = Deno.env.get("T2HUB_SESSION_KEY") || "";
       const envCookie = Deno.env.get("T2HUB_SESSION_COOKIE") || "";
       const cached = t2hubSession;
+      const vault = await getVaultSession();
       return json({
         env: { hasKey: !!envKey, hasCookie: !!envCookie, keyLen: envKey.length, cookieLen: envCookie.length },
         cache: cached ? { hasKey: !!cached.keyRaw, hasCookie: !!cached.cookie, expiresAt: new Date(cached.expiresAt).toISOString() } : null,
-        status: envKey && envCookie ? "ok" : cached ? "cached" : "missing",
+        vault: vault ? { hasKey: true, hasCookie: true, hasCsrf: !!vault.csrfToken, expiresAt: new Date(vault.expiresAt).toISOString() } : null,
+        status: vault ? "vault" : envKey && envCookie ? "env-fallback" : cached ? "cached" : "missing",
       });
     }
 
@@ -1073,7 +1283,12 @@ Deno.serve(async (req) => {
       // The upstream currently returns 250 records (count === total), but use
       // a high internal page size so future catalog growth is loaded in full.
       params.set("per_page", "10000");
-      return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
+      if (t2hubOccupationCache && t2hubOccupationCache.expiresAt > Date.now()) {
+        return json(t2hubOccupationCache.data);
+      }
+      const data = await t2hubFetch(t2hubQuery("/pacc/occupations", params), req);
+      t2hubOccupationCache = { expiresAt: Date.now() + 5 * 60 * 1000, data };
+      return json(data);
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
@@ -1104,8 +1319,10 @@ Deno.serve(async (req) => {
         throw { statusCode: 400, message: "Missing city, category_id, or exam_date" };
       }
 
-      const centersData = await t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req);
-      const sessionsData = await t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req);
+      const [centersData, sessionsData] = await Promise.all([
+        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
+        t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req),
+      ]);
       const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
       const centerByName = new Map(
         centers.map((center: any) => [String(center?.name || "").trim().toLowerCase(), center])
@@ -1594,6 +1811,15 @@ Deno.serve(async (req) => {
         (req.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path)) ||
         (req.method === "DELETE" && /^\/exam-reservations\/[^/]+$/.test(path)) ||
         isBookingReschedule;
+      const trackedOperation = isBookingCreate
+        ? "booking"
+        : isBookingReschedule
+          ? "reschedule"
+          : isPaymentCreate
+            ? "payment"
+            : req.method === "DELETE" && /^\/exam-reservations\/[^/]+$/.test(path)
+              ? "reservation_cancel"
+              : null;
       let accessContext: Awaited<ReturnType<typeof requireAccessPermission>> | null = null;
       let walletHoldId = "";
       let bookingCreditCost = 0;
@@ -1648,6 +1874,22 @@ Deno.serve(async (req) => {
             body,
           });
         }
+        const trackedReservationId = trackedOperation
+          ? findReservationId(data) || (isBookingReschedule ? String(match[1] || "") : null)
+          : null;
+        const recordSuccess = async () => {
+          if (!trackedOperation) return;
+          await recordBookingEvent({
+            accountId: accessContext?.account.id,
+            operation: trackedOperation,
+            route: path,
+            reservationId: trackedReservationId,
+            outcome: "success",
+            httpStatus: 200,
+            status: String(data?.reservation_status || data?.status || data?.state || "success"),
+            metadata: { request_id: req.headers.get("x-request-id") || null },
+          });
+        };
         if (automaticRefundsEnabled() && isReservationRead && accessContext?.account.permission_mode === "MANAGED") {
           // Reservation status changes happen upstream, so reconcile on every
           // normal reservation read. The database RPC is deterministic and
@@ -1717,6 +1959,7 @@ Deno.serve(async (req) => {
                   p_metadata: { source: "svp-proxy-auto-refund", operation: billingOperation },
                 });
                 if (!refundResult.error) {
+                  await recordSuccess();
                   return json({
                     ...data,
                     access_wallet: {
@@ -1734,14 +1977,30 @@ Deno.serve(async (req) => {
               }
             }
 
+            await recordSuccess();
             return json({ ...data, access_wallet: { charged: bookingCreditCost, balance_after: walletTransaction?.balance_after, transaction_id: walletTransaction?.id } });
           }
         }
         if (isReservationRead && data && typeof data === "object" && !Array.isArray(data) && accessContext?.account.permission_mode === "MANAGED") {
           return json({ ...data, access_wallet: { reconciliation: walletReconciliation } });
         }
+        await recordSuccess();
         return json(data);
       } catch (error) {
+        if (trackedOperation) {
+          const typedError = error as any;
+          await recordBookingEvent({
+            accountId: accessContext?.account.id,
+            operation: trackedOperation,
+            route: path,
+            reservationId: isBookingReschedule ? String(match[1] || "") : null,
+            outcome: "failure",
+            httpStatus: Number(typedError?.statusCode || 502),
+            errorCode: typedError?.code || "SVP_PROXY_ERROR",
+            message: typedError?.message || "SVP request failed",
+            metadata: { request_id: req.headers.get("x-request-id") || null },
+          });
+        }
         if (walletHoldId && accessContext) {
           await accessContext.supabase.rpc("wallet_release_booking_hold", { p_hold_id: walletHoldId });
         }
