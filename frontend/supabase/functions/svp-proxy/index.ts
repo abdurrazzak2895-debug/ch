@@ -18,13 +18,13 @@ import {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type, x-t2hub-cookie, x-t2hub-key",
-  "Access-Control-Expose-Headers": "x-t2hub-cookie",
+    "authorization, x-access-token, x-request-id, x-client-info, apikey, content-type, x-session-cookie, x-session-key",
+  "Access-Control-Expose-Headers": "x-session-cookie",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
 // Code returned in the outer error response when a t2hub-backed route is
-// called without x-t2hub-cookie + x-t2hub-key. The booking page detects
+// called without the session cookie and key headers. The booking page detects
 // this and triggers a one-time t2hub login bridge to capture the
 // caller's own t2hub session material.
 export const T2HUB_SESSION_MISSING_CODE = "T2HUB_SESSION_MISSING";
@@ -34,7 +34,7 @@ function json(data: unknown, status = 200) {
     ...corsHeaders,
     "Content-Type": "application/json",
   };
-  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -388,7 +388,7 @@ let t2hubOccupationCache: { expiresAt: number; data: any } | null = null;
 
 // After every t2hub call we stash the most recent cookies here so the
 // response builder can echo them back to the caller in
-// `x-t2hub-cookie`. The caller is responsible for keeping its own copy in
+// the session-cookie response header. The caller is responsible for keeping its own copy in
 // sync ΓÇö these cookies rotate on every t2hub response.
 let lastT2HubCookie = "";
 
@@ -401,17 +401,17 @@ let lastT2HubCookie = "";
 //
 // t2hub is a stateful Laravel app ΓÇö a fresh server has no session. Callers
 // MUST pass their logged-in t2hub cookies (and the session key from
-// `window.__sk`) via the `x-t2hub-cookie` and `x-t2hub-key` request headers
+// via the generic session cookie and key request headers
 // so we can hit the read-only API on their behalf. After each call we return
-// any rotated cookies in the `x-t2hub-cookie` response header so the caller
+// any rotated cookies in the `x-session-cookie` response header so the caller
 // can keep its own copy fresh.
-const T2HUB_KEY_HEADER = "x-t2hub-key";
-const T2HUB_COOKIE_HEADER = "x-t2hub-cookie";
-const T2HUB_RESPONSE_COOKIE_HEADER = "x-t2hub-cookie";
+const SESSION_KEY_HEADER = "x-session-key";
+const SESSION_COOKIE_HEADER = "x-session-cookie";
+const SESSION_RESPONSE_COOKIE_HEADER = "x-session-cookie";
 
 function t2HubHeadersFromRequest(req: Request): { keyRaw: string; cookie: string } | null {
-  const keyRaw = req.headers.get(T2HUB_KEY_HEADER)?.trim() || "";
-  const cookie = req.headers.get(T2HUB_COOKIE_HEADER)?.trim() || "";
+  const keyRaw = req.headers.get(SESSION_KEY_HEADER)?.trim() || "";
+  const cookie = req.headers.get(SESSION_COOKIE_HEADER)?.trim() || "";
   if (!keyRaw || !cookie) return null;
   return { keyRaw, cookie };
 }
@@ -619,7 +619,7 @@ async function getT2HubSession() {
   throw {
     statusCode: 503,
     code: T2HUB_SESSION_MISSING_CODE,
-    message: "t2hub session has not been provided. Run the refresh-t2hub-session script or pass x-t2hub-cookie + x-t2hub-key headers.",
+    message: "A session has not been provided. Run the session refresh or pass the session cookie and key headers.",
     details: { status: lastStatus || undefined },
   };
 }
@@ -824,7 +824,7 @@ function jsonWithT2HubCookie(data: unknown, status = 200) {
     ...corsHeaders,
     "Content-Type": "application/json",
   };
-  if (lastT2HubCookie) headers[T2HUB_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
   return new Response(JSON.stringify(data), { status, headers });
 }
 
