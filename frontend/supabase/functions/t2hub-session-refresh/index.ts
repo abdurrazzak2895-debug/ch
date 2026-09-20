@@ -57,6 +57,26 @@ async function encryptSecret(value: string): Promise<string> {
   return `${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(ciphertext))}`;
 }
 
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function decryptSecret(value: string): Promise<string> {
+  const masterSecret = Deno.env.get("SESSION_ENCRYPTION_KEY");
+  if (!masterSecret) throw new Error("SESSION_ENCRYPTION_KEY is not configured");
+  const separator = value.indexOf(".");
+  if (separator <= 0) throw new Error("Invalid encrypted secret format");
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(masterSecret));
+  const key = await crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["decrypt"]);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(value.slice(0, separator)) },
+    key,
+    base64ToBytes(value.slice(separator + 1)),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -392,6 +412,46 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     const body = await req.json();
+    if (body.refresh_all_active === true) {
+      const { data: accounts, error: accountsError } = await supabase
+        .from("t2hub_accounts")
+        .select("id,login_identifier,encrypted_password,login_url")
+        .eq("enabled", true)
+        .in("status", ["pending", "active", "expired", "error"])
+        .order("last_refresh_at", { ascending: false, nullsFirst: false });
+      if (accountsError) return json({ ok: false, error: accountsError.message }, 500);
+
+      const refreshed: Array<{ accountId: string; ok: true }> = [];
+      const failed: Array<{ accountId: string; ok: false; error: string }> = [];
+      for (const account of accounts ?? []) {
+        try {
+          if (!account.encrypted_password) throw new Error("Encrypted password is missing");
+          const password = await decryptSecret(account.encrypted_password);
+          const result = await loginWithoutBrowser(
+            account.login_identifier,
+            password,
+            account.login_url || DEFAULT_LOGIN_URL,
+          );
+          await saveEncryptedSession(account.login_identifier, result, password);
+          refreshed.push({ accountId: account.id, ok: true });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Refresh failed";
+          await supabase.from("t2hub_accounts").update({
+            status: "error",
+            last_error: message.slice(0, 500),
+          }).eq("id", account.id);
+          failed.push({ accountId: account.id, ok: false, error: message.slice(0, 200) });
+        }
+      }
+      return json({
+        ok: failed.length === 0,
+        refreshed_count: refreshed.length,
+        failed_count: failed.length,
+        refreshed,
+        failed,
+      }, failed.length && !refreshed.length ? 500 : 200);
+    }
+
     if (body.sync_env_session === true) {
       const loginIdentifier = String(
         body.login_identifier ?? Deno.env.get("T2HUB_TEST_MOBILE") ?? "",
