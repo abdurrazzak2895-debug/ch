@@ -676,3 +676,8 @@
   .ap-otp-account { align-items: flex-start; }
   .ap-otp-field input { min-height: 54px; font-size: 19px; }
 }
+
+.ap-phone-input { display: flex; align-items: center; overflow: hidden; border: 1px solid rgba(45, 59, 96, .18); border-radius: 12px; background: #fff; }
+.ap-phone-input > span { align-self: stretch; display: inline-flex; align-items: center; padding: 0 12px; border-right: 1px solid rgba(45, 59, 96, .12); background: #f4f6fb; color: #24345a; font-weight: 800; font-size: 13px; }
+.ap-phone-input input { min-width: 0; border: 0 !important; border-radius: 0 !important; }
+.ap-phone-input input:focus { outline: none; box-shadow: none; }

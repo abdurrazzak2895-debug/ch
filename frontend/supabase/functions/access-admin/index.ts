@@ -121,7 +121,7 @@ async function fetchSvpDashboardData(path: string, token: string) {
   return payload;
 }
 
-type DashboardSession = { user_id: string; svp_access_enc: string | null };
+type DashboardSession = { user_id: string; svp_access_enc: string | null; svp_access_exp?: string | null; refresh_expires_at?: string | null };
 type AccountSummary = { id: string; name: string; email: string; phone: string | null; role: string; status: string; agency_id: string | null; created_at: string | null };
 
 async function syncSvpDashboard(svpUsers: SvpIdentity[], sessions: DashboardSession[]) {
@@ -133,6 +133,9 @@ async function syncSvpDashboard(svpUsers: SvpIdentity[], sessions: DashboardSess
     }
   }
   const selectedSessions = [...latestSessionByUser.values()].slice(0, DASHBOARD_SYNC_LIMIT);
+  const now = Date.now();
+  const expiredAccessSessions = selectedSessions.filter((session) => session.svp_access_exp && new Date(session.svp_access_exp).getTime() <= now).length;
+  const expiredRefreshSessions = selectedSessions.filter((session) => session.refresh_expires_at && new Date(session.refresh_expires_at).getTime() <= now).length;
   const reservations: ReturnType<typeof normalizeReservation>[] = [];
   const payments: ReturnType<typeof normalizePayment>[] = [];
   let syncedAccounts = 0;
@@ -143,6 +146,10 @@ async function syncSvpDashboard(svpUsers: SvpIdentity[], sessions: DashboardSess
     await Promise.all(batch.map(async (session) => {
       const identity = identityById.get(session.user_id);
       if (!identity) return;
+      if (session.svp_access_exp && new Date(session.svp_access_exp).getTime() <= Date.now()) {
+        syncFailures += 1;
+        return;
+      }
       try {
         const token = await decryptSvpToken(session.svp_access_enc);
         const [reservationResult, paymentResult] = await Promise.allSettled([
@@ -170,6 +177,9 @@ async function syncSvpDashboard(svpUsers: SvpIdentity[], sessions: DashboardSess
     sessionAccounts: latestSessionByUser.size,
     syncedAccounts,
     syncFailures,
+    expiredAccessSessions,
+    expiredRefreshSessions,
+    reauthRequired: expiredAccessSessions,
     truncated: latestSessionByUser.size > DASHBOARD_SYNC_LIMIT,
   };
 }
@@ -263,11 +273,11 @@ serve(async (req) => {
 
     // GET /dashboard — account ownership plus live SVP reservation/payment analytics.
     if (path === "/dashboard" && req.method === "GET") {
-      const [accountsResult, svpUsersResult, sessionsResult, billingResult, walletsResult, t2hubAccountsResult, t2hubAlertsResult] = await Promise.all([
+      const [accountsResult, svpUsersResult, sessionsResult, billingResult, walletsResult, t2hubAccountsResult, t2hubAlertsResult, bookingEventsResult] = await Promise.all([
         supabase.from("accounts").select("id,name,email,phone,role,status,agency_id,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_users").select("id,login,email,full_name,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_sessions")
-          .select("id,user_id,svp_access_enc,svp_access_exp,updated_at")
+          .select("id,user_id,svp_access_enc,svp_access_exp,refresh_expires_at,updated_at")
           .is("revoked_at", null)
           .not("svp_access_enc", "is", null)
           .order("updated_at", { ascending: false }),
@@ -285,12 +295,17 @@ serve(async (req) => {
           .is("acknowledged_at", null)
           .order("occurred_at", { ascending: false })
           .limit(20),
+        supabase.from("svp_booking_events")
+          .select("id,account_id,operation,route,reservation_id,outcome,http_status,error_code,status,message,metadata,created_at")
+          .order("created_at", { ascending: false })
+          .limit(100),
       ]);
       if (accountsResult.error) throw accountsResult.error;
       if (svpUsersResult.error) throw svpUsersResult.error;
       if (sessionsResult.error) throw sessionsResult.error;
       if (t2hubAccountsResult.error) throw t2hubAccountsResult.error;
       if (t2hubAlertsResult.error) throw t2hubAlertsResult.error;
+      if (bookingEventsResult.error) throw bookingEventsResult.error;
 
       const accounts = (accountsResult.data || []) as AccountSummary[];
       const t2hubAccountById = new Map((t2hubAccountsResult.data || []).map((item: any) => [item.id, item]));
@@ -333,6 +348,24 @@ serve(async (req) => {
       const agencies = buildAgencyDashboard(accounts, svpUsers, live.reservations, live.payments, walletBalances);
       const accountByEmail = new Map(accounts.map((item) => [String(item.email || "").toLowerCase(), item]));
       const agencyById = new Map(accounts.filter((item) => item.role === "AGENCY").map((item) => [item.id, item]));
+      const accountById = new Map(accounts.map((item) => [item.id, item]));
+      const bookingEvents = (bookingEventsResult.data || []).map((event: any) => {
+        const account = event.account_id ? accountById.get(event.account_id) : null;
+        return {
+          id: event.id,
+          accountName: account?.name || "Unknown account",
+          agencyName: account?.agency_id ? agencyById.get(account.agency_id)?.name || null : null,
+          operation: event.operation,
+          route: event.route,
+          reservationId: event.reservation_id,
+          outcome: event.outcome,
+          httpStatus: event.http_status,
+          errorCode: event.error_code,
+          status: event.status,
+          message: event.message,
+          createdAt: event.created_at,
+        };
+      });
       const recentPayments = [...live.payments]
         .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
         .slice(0, 30)
@@ -368,11 +401,14 @@ serve(async (req) => {
           linkedSvpAccounts,
           completedBookings: live.reservations.filter((item) => item.completed).length,
           successfulPayments: live.payments.filter((item) => item.paid).length,
+          lifetimeBookingSuccesses: bookingEvents.filter((item) => item.outcome === "success" && /booking|reservation/i.test(item.operation)).length,
+          lifetimeBookingFailures: bookingEvents.filter((item) => item.outcome === "failure" && /booking|reservation/i.test(item.operation)).length,
           bookingCreditCost,
           totalWalletBalance,
         },
         agencies,
         recentBookings,
+        bookingEvents,
         recentPayments,
         recentAccounts: accounts.slice(0, 12).map(publicAccount),
         t2hubAlerts,
@@ -380,6 +416,9 @@ serve(async (req) => {
           sessionAccounts: live.sessionAccounts,
           syncedAccounts: live.syncedAccounts,
           syncFailures: live.syncFailures,
+          expiredAccessSessions: live.expiredAccessSessions,
+          expiredRefreshSessions: live.expiredRefreshSessions,
+          reauthRequired: live.reauthRequired,
           truncated: live.truncated,
           source: "svp-api",
           reservationsFetched: live.reservations.length,

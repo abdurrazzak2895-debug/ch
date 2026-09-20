@@ -45,6 +45,37 @@ function getSupabase() {
   );
 }
 
+async function recordBookingEvent(input: {
+  accountId?: string | null;
+  operation: string;
+  route: string;
+  reservationId?: string | null;
+  outcome: "success" | "failure";
+  httpStatus?: number | null;
+  errorCode?: string | null;
+  status?: string | null;
+  message?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  try {
+    const { error } = await getSupabase().from("svp_booking_events").insert({
+      account_id: input.accountId || null,
+      operation: input.operation,
+      route: input.route,
+      reservation_id: input.reservationId || null,
+      outcome: input.outcome,
+      http_status: input.httpStatus ?? null,
+      error_code: input.errorCode || null,
+      status: input.status || null,
+      message: input.message || null,
+      metadata: input.metadata || {},
+    });
+    if (error) console.error("booking event persistence failed", error.message);
+  } catch (error) {
+    console.error("booking event persistence threw", error);
+  }
+}
+
 const sessionEncoder = new TextEncoder();
 
 function base64ToBytes(value: string): Uint8Array {
@@ -1780,6 +1811,15 @@ Deno.serve(async (req) => {
         (req.method === "GET" && /^\/exam-reservations(?:\/[^/]+)?$/.test(path)) ||
         (req.method === "DELETE" && /^\/exam-reservations\/[^/]+$/.test(path)) ||
         isBookingReschedule;
+      const trackedOperation = isBookingCreate
+        ? "booking"
+        : isBookingReschedule
+          ? "reschedule"
+          : isPaymentCreate
+            ? "payment"
+            : req.method === "DELETE" && /^\/exam-reservations\/[^/]+$/.test(path)
+              ? "reservation_cancel"
+              : null;
       let accessContext: Awaited<ReturnType<typeof requireAccessPermission>> | null = null;
       let walletHoldId = "";
       let bookingCreditCost = 0;
@@ -1834,6 +1874,22 @@ Deno.serve(async (req) => {
             body,
           });
         }
+        const trackedReservationId = trackedOperation
+          ? findReservationId(data) || (isBookingReschedule ? String(match[1] || "") : null)
+          : null;
+        const recordSuccess = async () => {
+          if (!trackedOperation) return;
+          await recordBookingEvent({
+            accountId: accessContext?.account.id,
+            operation: trackedOperation,
+            route: path,
+            reservationId: trackedReservationId,
+            outcome: "success",
+            httpStatus: 200,
+            status: String(data?.reservation_status || data?.status || data?.state || "success"),
+            metadata: { request_id: req.headers.get("x-request-id") || null },
+          });
+        };
         if (automaticRefundsEnabled() && isReservationRead && accessContext?.account.permission_mode === "MANAGED") {
           // Reservation status changes happen upstream, so reconcile on every
           // normal reservation read. The database RPC is deterministic and
@@ -1903,6 +1959,7 @@ Deno.serve(async (req) => {
                   p_metadata: { source: "svp-proxy-auto-refund", operation: billingOperation },
                 });
                 if (!refundResult.error) {
+                  await recordSuccess();
                   return json({
                     ...data,
                     access_wallet: {
@@ -1920,14 +1977,30 @@ Deno.serve(async (req) => {
               }
             }
 
+            await recordSuccess();
             return json({ ...data, access_wallet: { charged: bookingCreditCost, balance_after: walletTransaction?.balance_after, transaction_id: walletTransaction?.id } });
           }
         }
         if (isReservationRead && data && typeof data === "object" && !Array.isArray(data) && accessContext?.account.permission_mode === "MANAGED") {
           return json({ ...data, access_wallet: { reconciliation: walletReconciliation } });
         }
+        await recordSuccess();
         return json(data);
       } catch (error) {
+        if (trackedOperation) {
+          const typedError = error as any;
+          await recordBookingEvent({
+            accountId: accessContext?.account.id,
+            operation: trackedOperation,
+            route: path,
+            reservationId: isBookingReschedule ? String(match[1] || "") : null,
+            outcome: "failure",
+            httpStatus: Number(typedError?.statusCode || 502),
+            errorCode: typedError?.code || "SVP_PROXY_ERROR",
+            message: typedError?.message || "SVP request failed",
+            metadata: { request_id: req.headers.get("x-request-id") || null },
+          });
+        }
         if (walletHoldId && accessContext) {
           await accessContext.supabase.rpc("wallet_release_booking_hold", { p_hold_id: walletHoldId });
         }

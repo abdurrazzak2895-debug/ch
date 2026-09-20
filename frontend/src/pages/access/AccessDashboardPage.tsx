@@ -26,7 +26,7 @@ interface SvpLoginInfo {
 }
 
 interface AdminDashboardData {
-  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; activeSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; bookingCreditCost: number; totalWalletBalance: number };
+  stats: { totalAccounts: number; agencies: number; agencyUsers: number; realSvpAccounts: number; activeSvpAccounts: number; linkedSvpAccounts: number; completedBookings: number; successfulPayments: number; lifetimeBookingSuccesses?: number; lifetimeBookingFailures?: number; bookingCreditCost: number; totalWalletBalance: number };
   agencies: Array<{
     id: string; name: string; email: string; status: string; createdAt?: string | null;
     userCount: number; svpAccountCount: number; activeSvpCount: number; completedBookings: number; pendingBookings: number; failedBookings: number; paidPayments: number; totalWalletBalance: number;
@@ -39,10 +39,11 @@ interface AdminDashboardData {
     }>;
   }>;
   recentBookings: Array<{ id: string; svpLogin: string; accountName: string; agencyName?: string | null; status: string; completed: boolean; createdAt?: string | null }>;
+  bookingEvents: Array<{ id: string; accountName: string; agencyName?: string | null; operation: string; route: string; reservationId?: string | null; outcome: "success" | "failure"; httpStatus?: number | null; errorCode?: string | null; status?: string | null; message?: string | null; createdAt?: string | null }>;
   recentPayments: Array<{ id: string; reservationId?: string | null; accountName: string; agencyName?: string | null; svpLogin: string; status: string; paid: boolean; amount?: number | null; currency?: string | null; createdAt?: string | null }>;
   recentAccounts: Account[];
   t2hubAlerts: Array<{ id: string; accountId: string; accountName: string; loginIdentifier: string; severity: string; message: string; occurredAt: string }>;
-  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; truncated: boolean; refreshedAt: string; source?: string; reservationsFetched?: number; paymentsFetched?: number };
+  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; expiredAccessSessions?: number; expiredRefreshSessions?: number; reauthRequired?: number; truncated: boolean; refreshedAt: string; source?: string; reservationsFetched?: number; paymentsFetched?: number };
   bookingCreditCost: number;
 }
 
@@ -253,7 +254,7 @@ export default function AccessDashboardPage() {
               <div><small>SESSION ACCOUNTS</small><strong>{adminDashboard.live.sessionAccounts}</strong><span>{adminDashboard.live.syncedAccounts} synced successfully</span></div>
               <div><small>BOOKING LOGS</small><strong>{adminDashboard.live.reservationsFetched ?? adminDashboard.stats.completedBookings}</strong><span>Fresh reservations from SVP</span></div>
               <div><small>PAYMENT LOGS</small><strong>{adminDashboard.live.paymentsFetched ?? adminDashboard.stats.successfulPayments}</strong><span>Fresh payment records from SVP</span></div>
-              <div className={adminDashboard.live.syncFailures > 0 ? "ap-live-overview__metric--bad" : "ap-live-overview__metric--good"}><small>SYNC HEALTH</small><strong>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.syncFailures} issues` : "Healthy"}</strong><span>{adminDashboard.live.syncFailures > 0 ? "Review failed API sessions" : "All selected sessions responded"}</span></div>
+              <div className={adminDashboard.live.syncFailures > 0 ? "ap-live-overview__metric--bad" : "ap-live-overview__metric--good"}><small>SYNC HEALTH</small><strong>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.reauthRequired ?? adminDashboard.live.syncFailures} re-auth required` : "Healthy"}</strong><span>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.expiredRefreshSessions ?? 0} refresh tokens expired` : "All selected sessions responded"}</span></div>
             </div>
           </section>
         )}
@@ -301,6 +302,14 @@ export default function AccessDashboardPage() {
             <Link className="ap-infra__card" to="/access/test-centers">
               <Database /><div><small>TEST CENTERS</small><strong>Review</strong></div>
             </Link>
+          </section>
+        )}
+
+        {isAdmin && adminDashboard && (
+          <section className="ap-lifetime-strip">
+            <div><small>LIFETIME BOOKING SUCCESS</small><strong>{adminDashboard.stats.lifetimeBookingSuccesses ?? 0}</strong><span>Recorded by the portal ledger</span></div>
+            <div><small>LIFETIME BOOKING FAILURES</small><strong>{adminDashboard.stats.lifetimeBookingFailures ?? 0}</strong><span>Failures retained for audit</span></div>
+            <div><small>SESSION RECOVERY</small><strong>{adminDashboard.live.reauthRequired ?? 0}</strong><span>Accounts requiring fresh SVP login</span></div>
           </section>
         )}
 
@@ -390,6 +399,26 @@ export default function AccessDashboardPage() {
                   </div>
                 ))}
                 {!adminDashboard.recentBookings?.length && <p className="ap-muted">No reservation records returned by the live SVP API.</p>}
+              </div>
+            </section>
+
+            <section className="ap-panel ap-lifetime-events">
+              <header>
+                <div><small>PORTAL BOOKING LEDGER</small><h2>Lifetime success and failure history</h2></div>
+                <span className="ap-live-note">Durable records · latest 100 events</span>
+              </header>
+              <div className="ap-event-table">
+                <div className="ap-event-row ap-event-row--head"><span>Account</span><span>Operation</span><span>Reservation</span><span>Recorded</span><span>Result</span></div>
+                {adminDashboard.bookingEvents?.slice(0, 20).map((event) => (
+                  <div className="ap-event-row" key={event.id}>
+                    <span><strong>{event.accountName}</strong><small>{event.agencyName || "Independent"}</small></span>
+                    <span><strong>{event.operation}</strong><small>{event.route}</small></span>
+                    <span>{event.reservationId ? `#${event.reservationId}` : "-"}</span>
+                    <time>{formatDateTime(event.createdAt || undefined)}</time>
+                    <span className={`ap-log-status ap-log-status--${event.outcome === "success" ? "positive" : "negative"}`}>{event.outcome === "success" ? "SUCCESS" : event.errorCode || "FAILED"}</span>
+                  </div>
+                ))}
+                {!adminDashboard.bookingEvents?.length && <p className="ap-muted">No portal booking events have been recorded yet.</p>}
               </div>
             </section>
 
