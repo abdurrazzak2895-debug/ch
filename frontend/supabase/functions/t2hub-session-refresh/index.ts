@@ -278,6 +278,14 @@ async function loginWithoutBrowser(
     }
   }
 
+  // Some T2Hub deployments generate __sk only in browser JavaScript and omit
+  // it from every server-rendered page. Reuse the existing managed key secret
+  // in that case; it is never returned to the caller and remains encrypted in
+  // the session vault.
+  if (!sessionKey) {
+    sessionKey = Deno.env.get("T2HUB_SESSION_KEY")?.trim() || null;
+  }
+
   return {
     cookieHeader: finalCookies,
     sessionKey,
@@ -290,6 +298,7 @@ async function loginWithoutBrowser(
 async function saveEncryptedSession(
   loginIdentifier: string,
   result: SessionResult,
+  password: string,
 ) {
   const { data: account, error: accountError } = await supabase
     .from("t2hub_accounts")
@@ -303,6 +312,7 @@ async function saveEncryptedSession(
   if (!result.cookieHeader) throw new Error("Login returned no session cookie");
 
   const encryptedCookie = await encryptSecret(result.cookieHeader);
+  const encryptedPassword = await encryptSecret(password);
   const encryptedSessionKey = result.sessionKey
     ? await encryptSecret(result.sessionKey)
     : null;
@@ -325,6 +335,7 @@ async function saveEncryptedSession(
   const { error: accountUpdateError } = await supabase
     .from("t2hub_accounts")
     .update({
+      encrypted_password: encryptedPassword,
       status: result.sessionKey ? "active" : "error",
       last_login_at: new Date().toISOString(),
       last_refresh_at: new Date().toISOString(),
@@ -381,8 +392,17 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     const body = await req.json();
-    const mobile = String(body.mobile ?? "").trim();
-    const password = String(body.password ?? "");
+    const useConfiguredCredentials = body.use_test_credentials === true;
+    const mobile = String(
+      useConfiguredCredentials
+        ? Deno.env.get("T2HUB_TEST_MOBILE") ?? ""
+        : body.mobile ?? "",
+    ).trim();
+    const password = String(
+      useConfiguredCredentials
+        ? Deno.env.get("T2HUB_TEST_PASSWORD") ?? ""
+        : body.password ?? "",
+    );
     const saveSession = body.save_session !== false;
 
     if (!mobile || !password) {
@@ -396,7 +416,7 @@ Deno.serve(async (req) => {
     );
 
     const saved = saveSession
-      ? await saveEncryptedSession(mobile, result)
+      ? await saveEncryptedSession(mobile, result, password)
       : null;
 
     return json({
