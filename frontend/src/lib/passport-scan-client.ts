@@ -57,6 +57,34 @@ export function isSupportedPassportImage(file: File): boolean {
   return !mime && /\.(?:jpe?g|png|webp)$/i.test(file.name);
 }
 
+async function canonicalizePassportImage(file: File): Promise<File> {
+  if (typeof Image === "undefined" || typeof document === "undefined") return file;
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = objectUrl;
+    await image.decode();
+    if (!image.naturalWidth || !image.naturalHeight) return file;
+
+    const maxSide = 2400;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return file;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
+    if (!blob || blob.size === 0) return file;
+    return new File([blob], "passport.jpg", { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function cropPassportPortrait(file: File, portraitBox: readonly number[]): Promise<File | null> {
   if (portraitBox.length !== 4 || portraitBox.some((value) => !Number.isFinite(value))) return null;
   const [rawYmin, rawXmin, rawYmax, rawXmax] = portraitBox.map((value) => Math.max(0, Math.min(1000, value)));
@@ -103,7 +131,8 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
     throw new Error("Upload one JPEG, PNG or WEBP image of the passport biodata page. Do not upload a PDF, personal-data page, or combined document.");
   }
   const form = new FormData();
-  form.append("file", file);
+  const uploadFile = await canonicalizePassportImage(file);
+  form.append("file", uploadFile, "passport.jpg");
   const token = getAccessToken();
   if (!token) throw new Error("Sign in before scanning a passport.");
   const idempotencyKey = crypto.randomUUID();

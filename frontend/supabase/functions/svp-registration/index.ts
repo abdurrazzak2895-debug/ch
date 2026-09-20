@@ -340,14 +340,21 @@ async function runOcr(file: File): Promise<Json> {
   let response: Response | null = null;
   let text = "";
   const startedAt = Date.now();
+  const sourceBytes = new Uint8Array(await file.arrayBuffer());
+  const sourceMime = String(file.type || "").toLowerCase();
+  const sourceName = String(file.name || "").toLowerCase();
+  const isJpeg = sourceMime === "image/jpeg" || sourceMime === "image/jpg" || /\.jpe?g$/.test(sourceName);
+  const upstreamFile = isJpeg
+    ? new File([sourceBytes], "passport.jpg", { type: "image/jpeg", lastModified: Date.now() })
+    : file;
   // The official SPA uses `passport`, while some SVP API deployments bind the
   // uploaded multipart part as `file`. A single 422 retry is safe because
   // passport recognition is read-only and prevents a field-name-only MRZ error.
   for (const fieldName of ["passport", "file"]) {
     const form = new FormData();
-    form.append(fieldName, file, file.name || "passport");
+    form.append(fieldName, upstreamFile, upstreamFile.name || "passport.jpg");
     const timer = setTimeout(() => controller.abort(), 120_000);
-    console.info(JSON.stringify({ event: "svp.ocr.upstream.start", field: fieldName, bytes: file.size, mime: file.type }));
+    console.info(JSON.stringify({ event: "svp.ocr.upstream.start", field: fieldName, bytes: upstreamFile.size, mime: upstreamFile.type, filename: upstreamFile.name }));
     try {
       response = await fetch(`${SVP_API_BASE}/individual_labor_space/registrations/recognize_passport?locale=${encodeURIComponent(SVP_LOCALE)}`, {
         method: "POST",
