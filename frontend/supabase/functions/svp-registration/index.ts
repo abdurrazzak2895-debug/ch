@@ -187,10 +187,10 @@ function b64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
-async function encryptionKey(): Promise<CryptoKey> {
+async function encryptionKey(usages: KeyUsage[] = ["encrypt"]): Promise<CryptoKey> {
   const raw = b64ToBytes(PII_KEY_B64);
   if (raw.length !== 32) throw new Error("REGISTRATION_PII_KEY_BASE64 must decode to 32 bytes");
-  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, usages);
 }
 
 async function encryptJson(value: Json): Promise<string> {
@@ -201,6 +201,46 @@ async function encryptJson(value: Json): Promise<string> {
   packed.set(iv, 0);
   packed.set(ciphertext, iv.length);
   return bytesToB64(packed);
+}
+
+/** Decrypts only envelopes produced by encryptJson(). Never log or return the plaintext. */
+async function decryptJson(ciphertextB64: string): Promise<Json> {
+  if (typeof ciphertextB64 !== "string" || !ciphertextB64.trim()) {
+    throw new Error("Encrypted PII envelope is missing");
+  }
+
+  let packed: Uint8Array;
+  try {
+    packed = b64ToBytes(ciphertextB64.trim());
+  } catch {
+    throw new Error("Encrypted PII envelope is invalid");
+  }
+
+  // 12-byte IV + ciphertext + 16-byte AES-GCM authentication tag.
+  if (packed.length < 29) throw new Error("Encrypted PII envelope is truncated");
+
+  let plaintext: ArrayBuffer;
+  try {
+    plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: packed.slice(0, 12) },
+      await encryptionKey(["decrypt"]),
+      packed.slice(12),
+    );
+  } catch {
+    // Deliberately do not distinguish a wrong key from tampering.
+    throw new Error("Encrypted PII envelope could not be authenticated");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    throw new Error("Decrypted PII envelope is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Decrypted PII envelope must be a JSON object");
+  }
+  return parsed as Json;
 }
 
 async function hmacPassport(passportNumber: string): Promise<string> {

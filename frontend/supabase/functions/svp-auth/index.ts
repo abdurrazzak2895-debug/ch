@@ -28,6 +28,22 @@ const SVP_ORIGIN = "https://svp-international.pacc.sa";
 const SVP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
+const SENSITIVE_KEYS = /password|token|authorization|cookie|email|phone|mobile|national.?id|passport|secret|otp|code/i;
+
+function sanitizeUpstreamDiagnostic(value: unknown, depth = 0): unknown {
+  if (depth > 4) return "[TRUNCATED]";
+  if (typeof value === "string") return value.slice(0, 240).replace(/\S+@\S+/g, "[REDACTED_EMAIL]");
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeUpstreamDiagnostic(item, depth + 1));
+  if (value && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = SENSITIVE_KEYS.test(key) ? "[REDACTED]" : sanitizeUpstreamDiagnostic(item, depth + 1);
+    }
+    return result;
+  }
+  return value == null ? null : String(value).slice(0, 240);
+}
+
 async function svpRequest(
   path: string,
   opts: { method?: string; token?: string; body?: unknown } = {}
@@ -58,6 +74,15 @@ async function svpRequest(
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      console.error(JSON.stringify({
+        event: "svp.auth.upstream.401",
+        status: res.status,
+        content_type: res.headers.get("content-type") || null,
+        www_authenticate: res.headers.get("www-authenticate") ? "[PRESENT]" : null,
+        body: sanitizeUpstreamDiagnostic(data),
+      }));
+    }
     throw { statusCode: res.status, message: `SVP request failed: ${res.status}`, details: data };
   }
   return data;
