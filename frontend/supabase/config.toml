@@ -21,6 +21,9 @@ verify_jwt = false
 [functions.svp-registration]
 verify_jwt = false
 
+[functions.t2hub-session-refresh]
+verify_jwt = false
+
 [functions.svp-auth]
 verify_jwt = false
 

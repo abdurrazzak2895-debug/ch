@@ -17,7 +17,11 @@ type SessionResult = {
   status: number;
 };
 
-const DEFAULT_LOGIN_URL = "https://t2hub.app/takamol/agent/login";
+// The gateway redirects to the login page but does not establish the Takamol
+// application context that emits window.__sk after authentication. Start on
+// the application host, matching the working browser refresh flow.
+const DEFAULT_LOGIN_URL = "https://takamol.t2hub.app/takamol/agent/login";
+const DEFAULT_APP_URL = "https://takamol.t2hub.app/";
 const encoder = new TextEncoder();
 
 const supabase = createClient(
@@ -244,6 +248,34 @@ async function loginWithoutBrowser(
     });
     const landingHtml = await landing.text();
     sessionKey = extractSessionKey(landingHtml);
+  }
+
+  // T2Hub may redirect through the gateway or return a page that does not
+  // include the inline key. The browser refresh flow then opens the Takamol
+  // application root, where the authenticated shell emits window.__sk.
+  if (!sessionKey) {
+    const landingUrls = [
+      DEFAULT_APP_URL,
+      "https://t2hub.app/takamol/",
+      "https://t2hub.app/takamol/agent/login",
+    ];
+    const seen = new Set<string>();
+    for (const candidate of landingUrls) {
+      if (seen.has(candidate) || candidate === finalUrl) continue;
+      seen.add(candidate);
+      const landing = await fetch(candidate, {
+        redirect: "manual",
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          cookie: finalCookies,
+          referer: loginUrl,
+          "user-agent": "Mozilla/5.0 (compatible; SupabaseEdgeFunction/1.0)",
+        },
+      });
+      const landingHtml = await landing.text();
+      sessionKey = extractSessionKey(landingHtml);
+      if (sessionKey) break;
+    }
   }
 
   return {
