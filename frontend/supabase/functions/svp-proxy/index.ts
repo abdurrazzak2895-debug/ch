@@ -579,6 +579,46 @@ async function getVaultSession(): Promise<NonNullable<typeof t2hubSession> | nul
   }
 }
 
+async function getAlternateVaultSession(
+  current: NonNullable<typeof t2hubSession>,
+): Promise<NonNullable<typeof t2hubSession> | null> {
+  try {
+    const supabase = getSupabase();
+    const { data: accounts, error: accountError } = await supabase
+      .from("t2hub_accounts")
+      .select("id")
+      .eq("enabled", true)
+      .eq("status", "active")
+      .order("last_refresh_at", { ascending: false });
+    if (accountError || !accounts?.length) return null;
+
+    for (const account of accounts) {
+      const { data: stored } = await supabase
+        .from("t2hub_sessions")
+        .select("encrypted_cookie,encrypted_session_key,encrypted_csrf,expires_at")
+        .eq("account_id", account.id)
+        .maybeSingle();
+      if (!stored?.encrypted_cookie || !stored.encrypted_session_key) continue;
+
+      try {
+        const [cookie, keyRaw, csrfToken] = await Promise.all([
+          decryptVaultSecret(stored.encrypted_cookie),
+          decryptVaultSecret(stored.encrypted_session_key),
+          stored.encrypted_csrf ? decryptVaultSecret(stored.encrypted_csrf) : Promise.resolve(""),
+        ]);
+        const expiresAt = stored.expires_at ? Date.parse(stored.expires_at) : Date.now() + 30 * 60 * 1000;
+        if (!cookie || !keyRaw || cookie === current.cookie || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue;
+        return { keyRaw, cookie, csrfToken, appPath: T2HUB_APP_PATH, expiresAt };
+      } catch {
+        // One malformed or rotated account must not prevent the next account.
+      }
+    }
+  } catch (error) {
+    console.error("T2Hub alternate vault session load failed", error instanceof Error ? error.message : "unknown error");
+  }
+  return null;
+}
+
 async function getT2HubSession() {
   if (t2hubSession && t2hubSession.expiresAt > Date.now()) return t2hubSession;
 
@@ -634,6 +674,16 @@ async function retryWithEnvSession<T>(
   }
   t2hubSession = fallback;
   return operation(fallback);
+}
+
+async function retryWithAlternateVaultSession<T>(
+  current: NonNullable<typeof t2hubSession>,
+  operation: (session: NonNullable<typeof t2hubSession>) => Promise<T>,
+): Promise<T> {
+  const alternate = await getAlternateVaultSession(current);
+  if (!alternate) throw new Error("No alternate vault session is available");
+  t2hubSession = alternate;
+  return operation(alternate);
 }
 
 // t2hub uses Laravel's Crypt::encrypt with AES-256-GCM. The encrypted envelope
@@ -764,6 +814,13 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
     return data;
   } catch (err: any) {
     try {
+      const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJson(path, alternate));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the legacy env fallback below.
+    }
+    try {
       const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJson(path, fallback));
       lastT2HubCookie = t2hubSession?.cookie || "";
       return data;
@@ -801,6 +858,13 @@ async function t2hubPost(path: string, body: unknown, req: Request): Promise<any
     lastT2HubCookie = session.cookie;
     return data;
   } catch (err: any) {
+    try {
+      const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJsonPost(path, body, alternate));
+      lastT2HubCookie = t2hubSession?.cookie || "";
+      return data;
+    } catch {
+      // Continue with the legacy env fallback below.
+    }
     try {
       const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJsonPost(path, body, fallback));
       lastT2HubCookie = t2hubSession?.cookie || "";
