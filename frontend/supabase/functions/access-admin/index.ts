@@ -263,7 +263,7 @@ serve(async (req) => {
 
     // GET /dashboard — account ownership plus live SVP reservation/payment analytics.
     if (path === "/dashboard" && req.method === "GET") {
-      const [accountsResult, svpUsersResult, sessionsResult, billingResult, walletsResult] = await Promise.all([
+      const [accountsResult, svpUsersResult, sessionsResult, billingResult, walletsResult, t2hubAccountsResult, t2hubAlertsResult] = await Promise.all([
         supabase.from("accounts").select("id,name,email,phone,role,status,agency_id,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_users").select("id,login,email,full_name,created_at").order("created_at", { ascending: false }),
         supabase.from("svp_sessions")
@@ -278,12 +278,34 @@ serve(async (req) => {
         supabase.from("wallets")
           .select("account_id,balance")
           .order("account_id"),
+        supabase.from("t2hub_accounts")
+          .select("id,name,login_identifier"),
+        supabase.from("t2hub_refresh_alerts")
+          .select("id,account_id,severity,message,occurred_at")
+          .is("acknowledged_at", null)
+          .order("occurred_at", { ascending: false })
+          .limit(20),
       ]);
       if (accountsResult.error) throw accountsResult.error;
       if (svpUsersResult.error) throw svpUsersResult.error;
       if (sessionsResult.error) throw sessionsResult.error;
+      if (t2hubAccountsResult.error) throw t2hubAccountsResult.error;
+      if (t2hubAlertsResult.error) throw t2hubAlertsResult.error;
 
       const accounts = (accountsResult.data || []) as AccountSummary[];
+      const t2hubAccountById = new Map((t2hubAccountsResult.data || []).map((item: any) => [item.id, item]));
+      const t2hubAlerts = (t2hubAlertsResult.data || []).map((item: any) => {
+        const account = t2hubAccountById.get(item.account_id);
+        return {
+          id: item.id,
+          accountId: item.account_id,
+          accountName: account?.name || "T2Hub account",
+          loginIdentifier: account?.login_identifier || "",
+          severity: item.severity,
+          message: item.message,
+          occurredAt: item.occurred_at,
+        };
+      });
       const svpUsersRaw = (svpUsersResult.data || []) as SvpIdentity[];
       const sessions = (sessionsResult.data || []) as DashboardSession[];
       const live = await syncSvpDashboard(svpUsersRaw, sessions);
@@ -340,6 +362,7 @@ serve(async (req) => {
         agencies,
         recentPayments,
         recentAccounts: accounts.slice(0, 12).map(publicAccount),
+        t2hubAlerts,
         live: {
           sessionAccounts: live.sessionAccounts,
           syncedAccounts: live.syncedAccounts,

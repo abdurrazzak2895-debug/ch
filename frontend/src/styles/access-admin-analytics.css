@@ -336,3 +336,24 @@
   background: rgba(245,158,11,.15);
   color: #f59e0b;
 }
+
+/* ── T2Hub refresh alerts ───────────────────────────────────────── */
+.ap-t2hub-alerts {
+  border: 1px solid rgba(248, 113, 113, .45);
+  background: linear-gradient(135deg, rgba(127, 29, 29, .22), rgba(30, 41, 59, .72));
+}
+.ap-t2hub-alerts > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ap-t2hub-alerts__title { display: flex; align-items: center; gap: 10px; color: #fca5a5; }
+.ap-t2hub-alerts__title svg { width: 20px; height: 20px; }
+.ap-t2hub-alerts__title h2 { color: #fee2e2; }
+.ap-t2hub-alerts__count { padding: 5px 9px; border-radius: 999px; background: rgba(248, 113, 113, .18); color: #fca5a5; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.ap-t2hub-alerts__list { display: grid; gap: 8px; margin-top: 14px; }
+.ap-t2hub-alert { padding: 11px 12px; border-left: 3px solid #f87171; border-radius: 8px; background: rgba(15, 23, 42, .62); }
+.ap-t2hub-alert > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ap-t2hub-alert strong { color: #f8fafc; font-size: 12px; }
+.ap-t2hub-alert small { color: #cbd5e1; font-size: 10px; }
+.ap-t2hub-alert p { margin: 6px 0 0; color: #fecaca; font-size: 11px; line-height: 1.45; }
+@media (max-width: 640px) {
+  .ap-t2hub-alerts > header, .ap-t2hub-alert > div { align-items: flex-start; flex-direction: column; gap: 6px; }
+}
+.ap-admin-dashboard .ap-t2hub-alerts__title h2 { color: #fee2e2; }

@@ -433,6 +433,10 @@ Deno.serve(async (req) => {
             account.login_url || DEFAULT_LOGIN_URL,
           );
           await saveEncryptedSession(account.login_identifier, result, password);
+          await supabase.from("t2hub_refresh_alerts")
+            .update({ acknowledged_at: new Date().toISOString() })
+            .eq("account_id", account.id)
+            .is("acknowledged_at", null);
           refreshed.push({ accountId: account.id, ok: true });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Refresh failed";
@@ -440,6 +444,11 @@ Deno.serve(async (req) => {
             status: "error",
             last_error: message.slice(0, 500),
           }).eq("id", account.id);
+          await supabase.from("t2hub_refresh_alerts").insert({
+            account_id: account.id,
+            severity: "error",
+            message: message.slice(0, 500),
+          });
           failed.push({ accountId: account.id, ok: false, error: message.slice(0, 200) });
         }
       }

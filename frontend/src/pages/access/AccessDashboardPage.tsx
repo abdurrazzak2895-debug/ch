@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Activity, Building2, CircleUserRound, Database, FileSliders,
+  Activity, AlertTriangle, Building2, CircleUserRound, Database, FileSliders,
   LayoutDashboard, LogOut, Megaphone, Plus, RefreshCw, SearchCheck, Server, ShieldCheck, Users, WalletCards,
 } from "lucide-react";
 import { useAccessAuth } from "@/contexts/AccessAuthContext";
@@ -40,6 +40,7 @@ interface AdminDashboardData {
   }>;
   recentPayments: Array<{ id: string; reservationId?: string | null; accountName: string; agencyName?: string | null; svpLogin: string; status: string; paid: boolean; amount?: number | null; currency?: string | null; createdAt?: string | null }>;
   recentAccounts: Account[];
+  t2hubAlerts: Array<{ id: string; accountId: string; accountName: string; loginIdentifier: string; severity: string; message: string; occurredAt: string }>;
   live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; truncated: boolean; refreshedAt: string };
   bookingCreditCost: number;
 }
@@ -222,6 +223,26 @@ export default function AccessDashboardPage() {
         </section>
 
         {error && <div className="ap-error">{error}</div>}
+
+        {isAdmin && (adminDashboard?.t2hubAlerts?.length ?? 0) > 0 && (
+          <section className="ap-panel ap-t2hub-alerts" role="alert">
+            <header>
+              <div className="ap-t2hub-alerts__title"><AlertTriangle /><div><small>SYSTEM ALERT</small><h2>T2Hub session refresh failures</h2></div></div>
+              <span className="ap-t2hub-alerts__count">{adminDashboard?.t2hubAlerts.length} unresolved</span>
+            </header>
+            <div className="ap-t2hub-alerts__list">
+              {adminDashboard?.t2hubAlerts.map((alert) => (
+                <article className="ap-t2hub-alert" key={alert.id}>
+                  <div>
+                    <strong>{alert.accountName}</strong>
+                    <small>{alert.loginIdentifier || "Account login hidden"} · {new Date(alert.occurredAt).toLocaleString("en-GB")}</small>
+                  </div>
+                  <p>{alert.message}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="ap-stats">
           {stats.map(([label, value, note, tone]) => (
