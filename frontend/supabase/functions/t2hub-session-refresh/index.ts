@@ -444,11 +444,19 @@ Deno.serve(async (req) => {
             status: "error",
             last_error: message.slice(0, 500),
           }).eq("id", account.id);
-          await supabase.from("t2hub_refresh_alerts").insert({
-            account_id: account.id,
-            severity: "error",
-            message: message.slice(0, 500),
-          });
+          const { data: openAlert } = await supabase.from("t2hub_refresh_alerts")
+            .select("id")
+            .eq("account_id", account.id)
+            .is("acknowledged_at", null)
+            .limit(1)
+            .maybeSingle();
+          if (!openAlert) {
+            await supabase.from("t2hub_refresh_alerts").insert({
+              account_id: account.id,
+              severity: "error",
+              message: message.slice(0, 500),
+            });
+          }
           failed.push({ accountId: account.id, ok: false, error: message.slice(0, 200) });
         }
       }
