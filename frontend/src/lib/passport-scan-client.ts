@@ -120,12 +120,15 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
     throw new Error("Passport auto-fill service could not be reached. Please try again or enter the details manually.");
   }
   const text = await res.text();
-  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown; error?: unknown }) | null;
+  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown; error?: unknown; errors?: unknown }) | null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
 
   if (!res.ok) {
-    const message = body?.detail || body?.message || body?.error || `Passport auto-fill service is unavailable (HTTP ${res.status}).`;
-    throw new Error(String(message));
+    const message = String(body?.detail || body?.message || body?.error || body?.errors || `Passport auto-fill service is unavailable (HTTP ${res.status}).`);
+    if (/invalid passport mrz/i.test(message)) {
+      throw new Error("SVP could not read the passport MRZ. Upload one straight, glare-free image of the biodata page with both MRZ lines fully visible; do not combine pages or crop the bottom.");
+    }
+    throw new Error(message);
   }
   const data = body?.data?.ocr || body?.data;
   if (!body?.ok || !data) {
