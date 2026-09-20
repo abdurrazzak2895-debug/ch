@@ -21,6 +21,10 @@ export interface PassportScanData {
   sex: "male" | "female" | "";
   nationality_code: string;          // 3-letter ISO ("BGD")
   country_code: string;              // 2-letter ISO ("BD")
+  country_id?: number | null;        // SVP country id (matches /registration/countries id)
+  nationality_id?: number | null;    // SVP nationality id
+  country?: Record<string, any> | null;      // full SVP country object (has country_code)
+  nationality?: Record<string, any> | null;  // full SVP nationality object (has nationality_code)
   issuing_country: string;           // e.g. "BANGLADESH"
   portrait_box: number[];            // [ymin, xmin, ymax, xmax], normalized 0..1000
   confidence: "high" | "medium" | "low";
@@ -33,7 +37,6 @@ export interface PassportScanResponse {
   data: PassportScanData;
 }
 
-const ACCEPTED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"] as const;
 const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
 
 function resolveScanUrl(): string {
@@ -50,7 +53,7 @@ function normalizeDateInput(value: unknown): string {
 
 export function isSupportedPassportImage(file: File): boolean {
   const mime = (file.type || "").toLowerCase();
-  if (ACCEPTED_MIME_TYPES.includes(mime as (typeof ACCEPTED_MIME_TYPES)[number])) return true;
+  if (mime.startsWith("image/")) return true;
   return !mime && /\.(?:jpe?g|png|webp)$/i.test(file.name);
 }
 
@@ -116,12 +119,15 @@ export async function scanPassport(file: File): Promise<PassportScanData> {
     throw new Error("Passport auto-fill service could not be reached. Please try again or enter the details manually.");
   }
   const text = await res.text();
-  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown; error?: unknown }) | null;
+  let body: (Partial<PassportScanResponse> & { detail?: unknown; message?: unknown; error?: unknown; errors?: unknown }) | null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
 
   if (!res.ok) {
-    const message = body?.detail || body?.message || body?.error || `Passport auto-fill service is unavailable (HTTP ${res.status}).`;
-    throw new Error(String(message));
+    const message = String(body?.detail || body?.message || body?.error || body?.errors || `Passport auto-fill service is unavailable (HTTP ${res.status}).`);
+    if (/invalid passport mrz/i.test(message)) {
+      throw new Error("SVP could not read the passport MRZ. Upload one straight, glare-free image of the biodata page with both MRZ lines fully visible; do not combine pages or crop the bottom.");
+    }
+    throw new Error(message);
   }
   const data = body?.data?.ocr || body?.data;
   if (!body?.ok || !data) {

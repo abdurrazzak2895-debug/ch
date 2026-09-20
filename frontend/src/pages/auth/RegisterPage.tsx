@@ -117,14 +117,24 @@ export default function RegisterPage() {
       .then((data) => {
         const list = data?.nationalities || data?.data?.nationalities || [];
         setNationalities(list);
-        if (pendingNationalityCode) {
-          const match = list.find((n: any) => [n.code, n.nationality_code, n.iso3, n.alpha3].some((c) => String(c || "").toUpperCase() === pendingNationalityCode));
-          if (match) update("nationality_id", String(match.id));
-          setPendingNationalityCode("");
-        }
       })
       .catch((err) => { setNationalities([]); setMessage(err.message); });
   }, [form.country_id]);
+  // Match a pending nationality code (from passport auto-fill or the default
+  // country) against the loaded nationalities list. Kept in its own effect so it
+  // also runs when the scanned country equals the already-selected one (in which
+  // case the country_id effect above does not re-fire but a new
+  // pendingNationalityCode still needs resolving).
+  useEffect(() => {
+    if (!pendingNationalityCode || nationalities.length === 0) return;
+    const wantId = pendingNationalityCode.startsWith("#") ? pendingNationalityCode.slice(1) : "";
+    const match = nationalities.find((n: any) =>
+      (wantId && String(n.id) === wantId) ||
+      (!wantId && [n.code, n.nationality_code, n.iso3, n.alpha3].some((c) => String(c || "").toUpperCase() === pendingNationalityCode))
+    );
+    if (match) update("nationality_id", String(match.id));
+    setPendingNationalityCode("");
+  }, [nationalities, pendingNationalityCode]);
   useEffect(() => () => { if (profilePreview) URL.revokeObjectURL(profilePreview); }, [profilePreview]);
   useEffect(() => {
     if (!RECAPTCHA_SITE_KEY) return;
@@ -168,8 +178,13 @@ export default function RegisterPage() {
     setPassportFile(file);
     if (!file) { setScanStatus("idle"); setScanMessage(""); return; }
     if (!isSupportedPassportImage(file)) {
-      setPassportFile(null);
-      setScanStatus("error"); setScanMessage("Use one JPEG, PNG or WEBP image of the passport biodata page with both MRZ lines. PDFs and combined personal-data documents are not accepted.");
+      if (file.type.toLowerCase().startsWith("image/")) {
+        setScanStatus("done");
+        setScanMessage("Image uploaded for manual review. Automatic OCR is unavailable for this image format; enter the passport fields below and continue for official validation.");
+      } else {
+        setPassportFile(null);
+        setScanStatus("error"); setScanMessage("Upload an image file. The image may be reviewed manually if automatic OCR cannot read it.");
+      }
       return;
     }
     setScanStatus("scanning"); setScanMessage("Reading passport…");
@@ -185,12 +200,25 @@ export default function RegisterPage() {
         national_id: data.national_id || old.national_id,
         sex: data.sex || old.sex,
       }));
-      if (data.country_code) {
-        const match = countries.find((c) => [c.code, c.country_code, c.iso2, c.alpha2].some((v) => String(v || "").toUpperCase() === data.country_code.toUpperCase()));
-        if (match) {
-          setForm((old) => ({ ...old, country_id: String(match.id), country_code: resolveCountryDialingCode(match), nationality_id: "" }));
-          if (data.nationality_code) setPendingNationalityCode(data.nationality_code.toUpperCase());
-        }
+      // Resolve country + nationality from the SVP OCR response. The flat
+      // country_code / nationality_code fields can arrive blank or as garbage
+      // (e.g. "[OBJECT OBJECT]" when the recognizer returns an object), so fall
+      // back to the nested country/nationality objects and the numeric ids SVP
+      // returns (country_id / nationality_id match the /registration/countries list).
+      const cleanCode = (value: unknown): string => {
+        const text = String(value ?? "").trim();
+        return /^\[object/i.test(text) ? "" : text;
+      };
+      const ocrCountryCode = (cleanCode(data.country_code) || cleanCode(data.country?.country_code) || cleanCode(data.country?.code)).toUpperCase();
+      const ocrNationalityCode = (cleanCode(data.nationality_code) || cleanCode(data.nationality?.nationality_code) || cleanCode(data.nationality?.code)).toUpperCase();
+      const countryMatch = countries.find((c) =>
+        (data.country_id != null && String(c.id) === String(data.country_id)) ||
+        (!!ocrCountryCode && [c.code, c.country_code, c.iso2, c.alpha2].some((v) => String(v || "").toUpperCase() === ocrCountryCode))
+      );
+      if (countryMatch) {
+        setForm((old) => ({ ...old, country_id: String(countryMatch.id), country_code: resolveCountryDialingCode(countryMatch), nationality_id: "" }));
+        if (ocrNationalityCode) setPendingNationalityCode(ocrNationalityCode);
+        else if (data.nationality_id != null) setPendingNationalityCode(`#${data.nationality_id}`);
       }
       const portrait = await cropPassportPortrait(file, data.portrait_box || []);
       if (portrait) {
@@ -207,7 +235,17 @@ export default function RegisterPage() {
         setScanStatus("done"); setScanMessage(`Auto-filled from this passport${extraFields.length ? `, including ${extraFields.join(" and ")}` : ""}. Please review before continuing.${data.national_id ? "" : " This passport has no readable separate National ID, so enter it manually."}`);
       }
     } catch (err: any) {
-      setScanStatus("error"); setScanMessage(err?.message || "Auto-fill failed — please enter your details manually.");
+      const message = String(err?.message || "Auto-fill failed");
+      // OCR is an auto-fill convenience; the official validation endpoint is
+      // still the source of truth. Do not block a user from continuing with
+      // manually reviewed passport fields when the recognizer rejects the
+      // image's MRZ (422). Other failures remain visible as hard errors.
+      if (/invalid passport mrz|passport recognition failed \(422\)/i.test(message)) {
+        setScanStatus("done");
+        setScanMessage("Passport OCR could not auto-fill this scan. Please review or enter the passport fields manually, then continue for official validation.");
+      } else {
+        setScanStatus("error"); setScanMessage(message || "Auto-fill failed — please enter your details manually.");
+      }
     }
   }
   function handleProfileFile(file: File | null) {

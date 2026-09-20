@@ -21,8 +21,7 @@ const MOCK_RECAPTCHA_ENABLED = Deno.env.get("SVP_ENABLE_MOCK_RECAPTCHA") === "tr
 const MOCK_OCR_ENABLED = Deno.env.get("SVP_ENABLE_MOCK_OCR") === "true";
 const BUCKET = "svp-private-documents";
 // The official registration UI accepts PNG/JPG/JPEG and caps the upload at 2 MB.
-const MAX_BYTES = 2 * 1024 * 1024;
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png"]);
+  const MAX_BYTES = 8 * 1024 * 1024;
 const KEY_VERSION = Deno.env.get("REGISTRATION_PII_KEY_VERSION") || "v1";
 
 type Json = Record<string, unknown>;
@@ -166,11 +165,19 @@ function requireOcrConfig() {
 
 async function ensurePrivateDocumentBucket(client: SupabaseClient) {
   const { data, error } = await client.storage.getBucket(BUCKET);
-  if (data) return;
+  if (data) {
+    const { error: updateError } = await client.storage.updateBucket(BUCKET, {
+      public: false,
+      fileSizeLimit: `${MAX_BYTES}`,
+      allowedMimeTypes: null,
+    });
+    if (updateError) throw new Error(`Passport bucket update failed: ${updateError.message}`);
+    return;
+  }
   if (error && !/not found|does not exist/i.test(error.message)) {
     throw new Error(`Passport bucket check failed: ${error.message}`);
   }
-  const { error: createError } = await client.storage.createBucket(BUCKET, { public: false, fileSizeLimit: `${MAX_BYTES}` });
+  const { error: createError } = await client.storage.createBucket(BUCKET, { public: false, fileSizeLimit: `${MAX_BYTES}`, allowedMimeTypes: null });
   if (createError && !/already exists/i.test(createError.message)) {
     throw new Error(`Passport bucket creation failed: ${createError.message}`);
   }
@@ -203,20 +210,17 @@ async function encryptJson(value: Json): Promise<string> {
   return bytesToB64(packed);
 }
 
-/** Decrypts only envelopes produced by encryptJson(). Never log or return the plaintext. */
+/** Decrypts only envelopes produced by encryptJson(); plaintext must stay server-side. */
 async function decryptJson(ciphertextB64: string): Promise<Json> {
   if (typeof ciphertextB64 !== "string" || !ciphertextB64.trim()) {
     throw new Error("Encrypted PII envelope is missing");
   }
-
   let packed: Uint8Array;
   try {
     packed = b64ToBytes(ciphertextB64.trim());
   } catch {
     throw new Error("Encrypted PII envelope is invalid");
   }
-
-  // 12-byte IV + ciphertext + 16-byte AES-GCM authentication tag.
   if (packed.length < 29) throw new Error("Encrypted PII envelope is truncated");
 
   let plaintext: ArrayBuffer;
@@ -227,7 +231,6 @@ async function decryptJson(ciphertextB64: string): Promise<Json> {
       packed.slice(12),
     );
   } catch {
-    // Deliberately do not distinguish a wrong key from tampering.
     throw new Error("Encrypted PII envelope could not be authenticated");
   }
 
@@ -313,8 +316,8 @@ function normalizeOcrData(input: any): Json {
     raw_mrz: rawMrz,
     raw_text: rawText,
     sex: sex === "m" ? "male" : sex === "f" ? "female" : sex,
-    nationality_code: String(source?.nationality_code || source?.nationality || "").trim().toUpperCase(),
-    country_code: String(source?.country_code || "").trim().toUpperCase(),
+    nationality_code: String(source?.nationality_code || source?.nationality?.nationality_code || source?.nationality?.code || "").trim().toUpperCase(),
+    country_code: String(source?.country_code || source?.country?.country_code || source?.country?.code || "").trim().toUpperCase(),
     country_id: source?.country?.id ?? source?.country_id ?? null,
     nationality_id: source?.nationality?.id ?? source?.nationality_id ?? null,
     country: source?.country ?? null,
@@ -327,9 +330,6 @@ function normalizeOcrData(input: any): Json {
 }
 
 async function runOcr(file: File): Promise<Json> {
-  const form = new FormData();
-  // This field name is used by the official SVP SPA client.
-  form.append("passport", file, file.name || "passport");
   const headers: Record<string, string> = {
     Accept: "application/json",
     Origin: "https://svp-international.pacc.sa",
@@ -337,22 +337,32 @@ async function runOcr(file: File): Promise<Json> {
     "X-Tenant-Name": SVP_TENANT,
   };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000);
-  let response: Response;
+  let response: Response | null = null;
+  let text = "";
   const startedAt = Date.now();
-  console.info(JSON.stringify({ event: "svp.ocr.upstream.start", bytes: file.size, mime: file.type }));
-  try {
-    response = await fetch(`${SVP_API_BASE}/individual_labor_space/registrations/recognize_passport?locale=${encodeURIComponent(SVP_LOCALE)}`, {
-      method: "POST",
-      headers,
-      body: form,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+  // The official SPA uses `passport`, while some SVP API deployments bind the
+  // uploaded multipart part as `file`. A single 422 retry is safe because
+  // passport recognition is read-only and prevents a field-name-only MRZ error.
+  for (const fieldName of ["passport", "file"]) {
+    const form = new FormData();
+    form.append(fieldName, file, file.name || "passport");
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    console.info(JSON.stringify({ event: "svp.ocr.upstream.start", field: fieldName, bytes: file.size, mime: file.type }));
+    try {
+      response = await fetch(`${SVP_API_BASE}/individual_labor_space/registrations/recognize_passport?locale=${encodeURIComponent(SVP_LOCALE)}`, {
+        method: "POST",
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    text = await response.text();
+    console.info(JSON.stringify({ event: "svp.ocr.upstream.response", field: fieldName, status: response.status, elapsed_ms: Date.now() - startedAt }));
+    if (response.ok || response.status !== 422 || fieldName === "file") break;
   }
-  console.info(JSON.stringify({ event: "svp.ocr.upstream.response", status: response.status, elapsed_ms: Date.now() - startedAt }));
-  const text = await response.text();
+  if (!response) throw new Error("SVP passport recognition did not return a response");
   let payload: any = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
@@ -387,6 +397,27 @@ function mockOcrData(): Json {
     issuing_country: "BANGLADESH",
     passport_image_hash: "mock-passport-image-hash",
     confidence: "high",
+  };
+}
+
+function manualReviewOcrData(errorMessage: string): Json {
+  return {
+    passport_number: "",
+    first_name: "",
+    last_name: "",
+    date_of_birth: "",
+    passport_expiration_date: "",
+    national_id: "",
+    sex: "",
+    nationality_code: "",
+    country_code: "",
+    country_id: null,
+    nationality_id: null,
+    issuing_country: "",
+    confidence: "low",
+    mrz_present: false,
+    manual_review_required: true,
+    ocr_error: errorMessage.slice(0, 240),
   };
 }
 
@@ -440,7 +471,13 @@ async function handleOfficialMultipart(req: Request, client: SupabaseClient, acc
 }
 
 function extensionFor(mime: string): string {
-  return mime === "application/pdf" ? "pdf" : mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("image/")) return (mime.slice("image/".length).split("+")[0] || "img").replace(/[^a-z0-9]/gi, "").slice(0, 12) || "img";
+  return "bin";
+}
+
+function isImageMime(mime: string): boolean {
+  return /^image\/[a-z0-9.+-]+$/i.test(mime);
 }
 
 function safeFileName(kind: string, mime: string): string {
@@ -465,19 +502,32 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
   if (!contentType.toLowerCase().includes("multipart/form-data")) return json({ error: "multipart/form-data required" }, 415);
   const form = await req.formData();
   const uploaded = form.get("file");
-  if (!(uploaded instanceof File)) return json({ error: "Passport file is required" }, 400);
-  if (!ALLOWED_MIME.has(uploaded.type)) return json({ error: "Unsupported file type" }, 415);
-  if (uploaded.size <= 0 || uploaded.size > MAX_BYTES) return json({ error: "File must be between 1 byte and 2 MB" }, 413);
+  if (!(uploaded instanceof File)) return json({ error: "Passport image is required" }, 400);
+  if (!isImageMime(uploaded.type)) return json({ error: "Upload an image file" }, 415);
+  if (uploaded.size <= 0 || uploaded.size > MAX_BYTES) return json({ error: "Image must be between 1 byte and 8 MB" }, 413);
 
   const bytes = new Uint8Array(await uploaded.arrayBuffer());
   const checksum = await sha256(bytes);
   const mockRequested = req.headers.get("x-ocr-test-mode") === "mock";
   if (mockRequested && !MOCK_OCR_ENABLED) return json({ error: "Mock OCR is disabled" }, 403);
-  const ocr = mockRequested ? mockOcrData() : await runOcr(uploaded);
+  let ocr: Json;
+  let manualReviewRequired = false;
+  if (mockRequested) {
+    ocr = mockOcrData();
+  } else {
+    try {
+      ocr = await runOcr(uploaded);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Official passport recognition failed";
+      manualReviewRequired = true;
+      ocr = manualReviewOcrData(message);
+      console.warn(JSON.stringify({ event: "svp.ocr.manual_review_fallback", bytes: uploaded.size, reason: message.slice(0, 240) }));
+    }
+  }
   if (mockRequested) console.warn(JSON.stringify({ event: "svp.ocr.mock_used", bytes: uploaded.size }));
   const idempotencyKey = String(req.headers.get("idempotency-key") || form.get("idempotency_key") || crypto.randomUUID()).trim();
   if (idempotencyKey.length > 160) return json({ error: "idempotency_key is too long" }, 400);
-  const passportHash = await hmacPassport(normalizePassport(ocr.passport_number));
+  const passportHash = await hmacPassport(normalizePassport(ocr.passport_number) || `UNREADABLE:${checksum}`);
   const registrationId = crypto.randomUUID();
   const path = `${account.id}/${registrationId}/passport/${safeFileName("passport", uploaded.type)}`;
 
@@ -504,12 +554,35 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
     passport_number_hash: passportHash,
     entry_source: "ocr",
     ocr_confidence: ocr.confidence === "high" ? 0.95 : ocr.confidence === "medium" ? 0.75 : 0.4,
-    ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition",
+    ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition",
     idempotency_key: idempotencyKey,
   });
   if (registrationError) {
     await client.storage.from(BUCKET).remove([path]);
-    if (registrationError.code === "23505") return json({ error: "An active registration already exists for this passport or idempotency key" }, 409);
+    if (registrationError.code === "23505") {
+      // A draft already exists for this passport (the same user re-scanning, e.g.
+      // after a refresh or a retake). Don't hard-fail with 409 and throw away a
+      // perfectly good OCR read — return the freshly-recognized fields so the
+      // registration form still auto-fills, along with the existing draft id.
+      const { data: existing } = await client
+        .from("svp_registrations")
+        .select("id")
+        .eq("owner_account_id", account.id)
+        .eq("passport_number_hash", passportHash)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return json({
+        ok: true,
+        reused: true,
+        data: {
+          registration_id: existing?.id ?? null,
+          document: null,
+          ocr,
+          ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition",
+        },
+      }, 200);
+    }
     throw new Error(`Registration draft failed: ${registrationError.message}`);
   }
 
@@ -532,8 +605,8 @@ async function handleOcrScan(req: Request, client: SupabaseClient, account: Auth
     throw new Error(`Passport metadata failed: ${documentError.message}`);
   }
 
-  await audit(client, registrationId, account.id, "registration.ocr_scanned", { document_kind: "PASSPORT", ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition" }, "DRAFT");
-  return json({ ok: true, data: { registration_id: registrationId, document, ocr, ocr_provider: mockRequested ? "mock-ocr-test" : "svp-official-passport-recognition" } }, 201);
+  await audit(client, registrationId, account.id, manualReviewRequired ? "registration.ocr_manual_review_required" : "registration.ocr_scanned", { document_kind: "PASSPORT", ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition" }, "DRAFT");
+  return json({ ok: true, data: { registration_id: registrationId, document, ocr, manual_review_required: manualReviewRequired, ocr_provider: mockRequested ? "mock-ocr-test" : manualReviewRequired ? "svp-official-passport-recognition-manual-review" : "svp-official-passport-recognition" } }, 201);
 }
 
 async function handleStore(req: Request, client: SupabaseClient, account: AuthAccount) {

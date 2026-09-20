@@ -148,7 +148,7 @@ export async function apiAuthForm<T = any>(action: string, form: FormData): Prom
 async function callFunction<T = any>(
   kind: FunctionKind,
   path: string,
-  { method = "GET", body, token }: { method?: string; body?: any; token?: string } = {}
+  { method = "GET", body, token, signal }: { method?: string; body?: any; token?: string; signal?: AbortSignal } = {}
 ): Promise<T> {
   const prefix = PROXY_PREFIX(kind);
   if (!prefix) {
@@ -166,6 +166,7 @@ async function callFunction<T = any>(
     const accessPortalToken = localStorage.getItem("access_token");
     return {
       method,
+      signal,
       headers: {
         "Content-Type": "application/json",
         ...(candidateToken ? { Authorization: `Bearer ${candidateToken}` } : {}),
@@ -215,7 +216,7 @@ async function callFunction<T = any>(
 
 export async function api<T = any>(
   path: string,
-  opts: { method?: string; body?: any; token?: string } = {}
+  opts: { method?: string; body?: any; token?: string; signal?: AbortSignal } = {}
 ): Promise<T> {
   return callFunction<T>("proxy", path, opts);
 }
