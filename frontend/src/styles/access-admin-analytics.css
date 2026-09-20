@@ -357,3 +357,45 @@
   .ap-t2hub-alerts > header, .ap-t2hub-alert > div { align-items: flex-start; flex-direction: column; gap: 6px; }
 }
 .ap-admin-dashboard .ap-t2hub-alerts__title h2 { color: #fee2e2; }
+
+/* ── Premium live operations command centre ─────────────────────── */
+.ap-live-overview {
+  margin: 0 0 22px;
+  padding: 20px 22px;
+  border: 1px solid rgba(111, 126, 255, .24);
+  border-radius: 18px;
+  background: linear-gradient(120deg, #101938 0%, #172653 58%, #123e50 100%);
+  color: #eef2ff;
+  box-shadow: 0 16px 32px rgba(23, 33, 61, .14);
+}
+.ap-live-overview__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.ap-live-overview__identity { display: flex; align-items: center; gap: 11px; }
+.ap-live-overview__identity small { color: #95a4d0; font-size: 10px; font-weight: 800; letter-spacing: .14em; }
+.ap-live-overview__identity h2 { margin: 3px 0 0; color: #fff; font-size: 18px; }
+.ap-live-overview__pulse { width: 10px; height: 10px; border-radius: 50%; background: #45e0a0; box-shadow: 0 0 0 5px rgba(69,224,160,.12), 0 0 16px rgba(69,224,160,.8); }
+.ap-live-overview__meta { display: flex; align-items: center; gap: 10px; color: #aeb9d4; font-size: 10px; white-space: nowrap; }
+.ap-live-source { padding: 5px 8px; border: 1px solid rgba(69,224,160,.3); border-radius: 999px; background: rgba(69,224,160,.12); color: #7ff0bd; font-weight: 800; letter-spacing: .08em; }
+.ap-live-overview__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.ap-live-overview__grid > div { min-height: 86px; padding: 13px 14px; border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(255,255,255,.055); }
+.ap-live-overview__grid small { display: block; color: #92a0c5; font-size: 9px; font-weight: 800; letter-spacing: .1em; }
+.ap-live-overview__grid strong { display: block; margin: 8px 0 4px; color: #fff; font-size: 22px; letter-spacing: -.03em; }
+.ap-live-overview__grid span { color: #aab6d4; font-size: 10px; }
+.ap-live-overview__metric--good strong { color: #6ee7b7; }
+.ap-live-overview__metric--bad strong { color: #fda4af; }
+.ap-live-bookings { background: #fff; }
+.ap-booking-table { overflow-x: auto; }
+.ap-booking-row { display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(140px, 1fr) minmax(120px, .9fr) minmax(110px, .8fr) minmax(170px, 1fr) 118px; gap: 12px; align-items: center; min-width: 900px; padding: 13px 0; border-bottom: 1px solid #edf0f6; color: #4e5b79; font-size: 11px; }
+.ap-booking-row:last-child { border-bottom: 0; }
+.ap-booking-row > span:first-child { display: flex; flex-direction: column; gap: 3px; }
+.ap-booking-row strong { color: #17213d; font-size: 12px; }
+.ap-booking-row small { color: #8b94ae; font-size: 10px; }
+.ap-booking-row time { color: #7c86a4; font-size: 10px; white-space: nowrap; }
+.ap-booking-row--head { padding-top: 0; color: #7c86a4; font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.ap-booking-row--head span { color: #7c86a4; }
+.ap-mono { color: #5264b5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.ap-log-status { justify-self: start; padding: 5px 7px; border-radius: 999px; font-size: 9px; font-weight: 800; letter-spacing: .04em; white-space: nowrap; }
+.ap-log-status--positive { background: #e7f9f0; color: #078555; }
+.ap-log-status--pending { background: #fff6df; color: #b77908; }
+.ap-log-status--negative { background: #fff0f1; color: #d13d55; }
+@media (max-width: 900px) { .ap-live-overview__grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .ap-live-overview__head { align-items: flex-start; flex-direction: column; } .ap-live-overview__meta { align-items: flex-start; flex-direction: column; } .ap-live-overview__grid { grid-template-columns: 1fr 1fr; } }

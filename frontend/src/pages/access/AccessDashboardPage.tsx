@@ -38,10 +38,11 @@ interface AdminDashboardData {
       recentReservations: Array<{ id: string; status: string; completed: boolean; createdAt: string | null }>;
     }>;
   }>;
+  recentBookings: Array<{ id: string; svpLogin: string; accountName: string; agencyName?: string | null; status: string; completed: boolean; createdAt?: string | null }>;
   recentPayments: Array<{ id: string; reservationId?: string | null; accountName: string; agencyName?: string | null; svpLogin: string; status: string; paid: boolean; amount?: number | null; currency?: string | null; createdAt?: string | null }>;
   recentAccounts: Account[];
   t2hubAlerts: Array<{ id: string; accountId: string; accountName: string; loginIdentifier: string; severity: string; message: string; occurredAt: string }>;
-  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; truncated: boolean; refreshedAt: string };
+  live: { sessionAccounts: number; syncedAccounts: number; syncFailures: number; truncated: boolean; refreshedAt: string; source?: string; reservationsFetched?: number; paymentsFetched?: number };
   bookingCreditCost: number;
 }
 
@@ -53,6 +54,20 @@ function formatDate(value?: string) {
   if (!value) return "Recently";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Recently" : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not available" : date.toLocaleString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
+function statusTone(status: string, completed = false) {
+  if (completed || /complete|confirm|book|success|paid|active|ready/i.test(status)) return "positive";
+  if (/fail|cancel|expire|reject|error|void/i.test(status)) return "negative";
+  return "pending";
 }
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
@@ -222,6 +237,27 @@ export default function AccessDashboardPage() {
           </div>
         </section>
 
+        {isAdmin && adminDashboard && (
+          <section className="ap-live-overview">
+            <div className="ap-live-overview__head">
+              <div className="ap-live-overview__identity">
+                <span className="ap-live-overview__pulse" />
+                <div><small>LIVE OPERATIONS</small><h2>SVP API command centre</h2></div>
+              </div>
+              <div className="ap-live-overview__meta">
+                <span className="ap-live-source">{adminDashboard.live.source === "svp-api" ? "LIVE API" : "DATA SOURCE UNKNOWN"}</span>
+                <span>Updated {formatDateTime(adminDashboard.live.refreshedAt)}</span>
+              </div>
+            </div>
+            <div className="ap-live-overview__grid">
+              <div><small>SESSION ACCOUNTS</small><strong>{adminDashboard.live.sessionAccounts}</strong><span>{adminDashboard.live.syncedAccounts} synced successfully</span></div>
+              <div><small>BOOKING LOGS</small><strong>{adminDashboard.live.reservationsFetched ?? adminDashboard.stats.completedBookings}</strong><span>Fresh reservations from SVP</span></div>
+              <div><small>PAYMENT LOGS</small><strong>{adminDashboard.live.paymentsFetched ?? adminDashboard.stats.successfulPayments}</strong><span>Fresh payment records from SVP</span></div>
+              <div className={adminDashboard.live.syncFailures > 0 ? "ap-live-overview__metric--bad" : "ap-live-overview__metric--good"}><small>SYNC HEALTH</small><strong>{adminDashboard.live.syncFailures > 0 ? `${adminDashboard.live.syncFailures} issues` : "Healthy"}</strong><span>{adminDashboard.live.syncFailures > 0 ? "Review failed API sessions" : "All selected sessions responded"}</span></div>
+            </div>
+          </section>
+        )}
+
         {error && <div className="ap-error">{error}</div>}
 
         {isAdmin && (adminDashboard?.t2hubAlerts?.length ?? 0) > 0 && (
@@ -331,6 +367,29 @@ export default function AccessDashboardPage() {
                   </details>
                 ))}
                 {!adminDashboard.agencies.length && <p className="ap-muted">No agencies found.</p>}
+              </div>
+            </section>
+
+            <section className="ap-panel ap-live-bookings">
+              <header>
+                <div><small>LIVE SVP RESERVATIONS</small><h2>Booking activity log</h2></div>
+                <span className="ap-live-note">Source: SVP API · {adminDashboard.live.truncated ? "latest 50 sessions" : "all active sessions"}</span>
+              </header>
+              <div className="ap-booking-table">
+                <div className="ap-booking-row ap-booking-row--head">
+                  <span>Reservation</span><span>Account</span><span>Agency</span><span>SVP login</span><span>Last update</span><span>Status</span>
+                </div>
+                {adminDashboard.recentBookings?.map((booking) => (
+                  <div className="ap-booking-row" key={`${booking.svpLogin}:${booking.id}`}>
+                    <span><strong>#{booking.id}</strong><small>{booking.completed ? "Completed reservation" : "Open reservation"}</small></span>
+                    <span>{booking.accountName}</span>
+                    <span>{booking.agencyName || "Independent"}</span>
+                    <span className="ap-mono">{booking.svpLogin}</span>
+                    <time>{formatDateTime(booking.createdAt || undefined)}</time>
+                    <span className={`ap-log-status ap-log-status--${statusTone(booking.status, booking.completed)}`}>{booking.completed ? "COMPLETED" : booking.status || "UNKNOWN"}</span>
+                  </div>
+                ))}
+                {!adminDashboard.recentBookings?.length && <p className="ap-muted">No reservation records returned by the live SVP API.</p>}
               </div>
             </section>
 

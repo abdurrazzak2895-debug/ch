@@ -341,6 +341,18 @@ serve(async (req) => {
           const agency = account?.agency_id ? agencyById.get(account.agency_id) : null;
           return { ...payment, accountName: account?.name || payment.svpLogin, agencyName: agency?.name || null };
         });
+      const recentBookings = [...live.reservations]
+        .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
+        .slice(0, 40)
+        .map((reservation) => {
+          const account = accountByEmail.get(reservation.svpEmail);
+          const agency = account?.agency_id ? agencyById.get(account.agency_id) : null;
+          return {
+            ...reservation,
+            accountName: account?.name || reservation.svpLogin,
+            agencyName: agency?.name || null,
+          };
+        });
       const linkedSvpAccounts = svpUsers.filter((item) => accountByEmail.has(String(item.email || item.login || "").toLowerCase())).length;
       const activeSvpAccounts = svpUsers.filter((item) => item.sessionActive).length;
       const bookingCreditCost = Number(billingResult.data?.booking_credit_cost) || 0;
@@ -360,6 +372,7 @@ serve(async (req) => {
           totalWalletBalance,
         },
         agencies,
+        recentBookings,
         recentPayments,
         recentAccounts: accounts.slice(0, 12).map(publicAccount),
         t2hubAlerts,
@@ -368,6 +381,9 @@ serve(async (req) => {
           syncedAccounts: live.syncedAccounts,
           syncFailures: live.syncFailures,
           truncated: live.truncated,
+          source: "svp-api",
+          reservationsFetched: live.reservations.length,
+          paymentsFetched: live.payments.length,
           refreshedAt: new Date().toISOString(),
         },
         bookingCreditCost,
