@@ -11,6 +11,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: Production
     env:
       # GitHub Actions doesn't allow the `secrets` context directly inside an
       # `if:` conditional — it fails to parse with "Unrecognized named-value:
