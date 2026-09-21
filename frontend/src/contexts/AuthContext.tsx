@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { apiAuth, clearSession, getSession } from "@/lib/api";
+import { apiAuth, clearSession, getSession, refreshSession } from "@/lib/api";
 
 interface User {
   login: string;
@@ -32,7 +32,7 @@ function decodeJwtPayload(token: string) {
   try {
     const payload = token.split(".")[1];
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(normalized));
+    return JSON.parse(normalized);
   } catch {
     return null;
   }
@@ -43,16 +43,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { accessToken } = getSession();
-    if (accessToken) {
-      const payload = decodeJwtPayload(accessToken);
-      if (payload?.exp && Number(payload.exp) * 1000 <= Date.now()) {
-        clearSession();
-      } else {
-        setUser(payload ? { login: payload.login || "User" } : { login: "User" });
+    let active = true;
+
+    async function hydrateSession() {
+      const { accessToken } = getSession();
+      let token = accessToken;
+      const payload = token ? decodeJwtPayload(token) : null;
+
+      // Do not clear refreshToken/sessionId merely because the short-lived
+      // access JWT expired. Refresh first; refreshSession clears the complete
+      // session only when the server rejects the refresh credentials.
+      if (!payload || (payload.exp && Number(payload.exp) * 1000 <= Date.now())) {
+        token = await refreshSession();
       }
+
+      if (!active) return;
+      if (token) {
+        const nextPayload = decodeJwtPayload(token);
+        setUser(nextPayload ? { login: nextPayload.login || "User" } : { login: "User" });
+      } else {
+        // If there were no refresh credentials, or the refresh was rejected,
+        // make sure malformed/stale local state does not keep the app guarded.
+        clearSession();
+        setUser(null);
+      }
+      setLoading(false);
     }
-    setLoading(false);
+
+    hydrateSession().catch(() => {
+      if (!active) return;
+      setLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const loginFn = useCallback((accessToken: string, userData?: any) => {

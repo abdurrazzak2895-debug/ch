@@ -22,7 +22,7 @@ function resolveBackend() {
   if (SUPABASE_URL) {
     const useRailwayRegistration = Boolean(import.meta.env.VITE_BACKEND_URL);
     return {
-      // The proxy verifies the JWT issued by svp-auth.  Never use Railway for
+      // The proxy verifies the JWT issued by svp-auth. Never use Railway for
       // authentication while using the Supabase proxy: the two deployments can
       // have different JWT_ACCESS_SECRET values, which makes every proxy call
       // fail with "Invalid signature".
@@ -31,7 +31,7 @@ function resolveBackend() {
       base: `${SUPABASE_URL}/functions/v1`,
       authPrefix: "/svp-auth",
       // Registration is public and does not create a local application
-      // session.  When Railway is configured, send its multipart requests
+      // session. When Railway is configured, send its multipart requests
       // there: SVP rejects the Supabase Edge runtime's HTTP/2 connection for
       // this endpoint with a stream/protocol error.
       registrationUsesCookies: useRailwayRegistration,
@@ -100,10 +100,7 @@ async function doFetch(url: string, opts: RequestInit) {
   return { res, data };
 }
 
-export async function apiAuth<T = any>(
-  action: string,
-  body: any
-): Promise<T> {
+export async function apiAuth<T = any>(action: string, body: any): Promise<T> {
   const { res, data } = await doFetch(`${AUTH_BASE}${AUTH_PREFIX}${action}`, {
     method: "POST",
     credentials: AUTH_USES_COOKIES ? "include" : "same-origin",
@@ -116,7 +113,7 @@ export async function apiAuth<T = any>(
 
   if (!res.ok) throw Object.assign(new Error(data?.message || "Request failed"), { status: res.status, data });
 
-  // Save session tokens if returned
+  // Save the complete candidate session returned by OTP/token login.
   if (data?.accessToken) saveSession(data);
 
   return data as T;
@@ -143,6 +140,37 @@ export async function apiAuthForm<T = any>(action: string, form: FormData): Prom
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
   if (!res.ok) throw Object.assign(new Error(data?.message || data?.error || "Request failed"), { status: res.status, data });
   return data as T;
+}
+
+/**
+ * Refresh the candidate SVP session without discarding its refresh credentials.
+ * This is also used during app bootstrap, before an expired access token can
+ * cause the auth provider to clear the whole session.
+ */
+export async function refreshSession(): Promise<string | null> {
+  const { refreshToken, sessionId } = getSession();
+  if (!refreshToken || !sessionId) return null;
+
+  try {
+    const refreshRes = await doFetch(`${AUTH_BASE}${AUTH_PREFIX}/refresh`, {
+      method: "POST",
+      credentials: AUTH_USES_COOKIES ? "include" : "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, refreshToken }),
+    });
+
+    if (refreshRes.res.ok && refreshRes.data?.accessToken) {
+      saveSession({ accessToken: refreshRes.data.accessToken });
+      return refreshRes.data.accessToken;
+    }
+
+    // A rejected refresh token/session cannot be recovered client-side.
+    if (refreshRes.res.status === 401) clearSession();
+  } catch {
+    // Preserve the session on transient network failures so a later request
+    // can retry rather than logging the user out unnecessarily.
+  }
+  return null;
 }
 
 async function callFunction<T = any>(
@@ -186,23 +214,10 @@ async function callFunction<T = any>(
 
   const canRefresh = AUTH_USES_COOKIES || Boolean(session.refreshToken && session.sessionId);
   if (shouldRefresh(res.status, data) && canRefresh) {
-    try {
-      const refreshRes = await doFetch(`${AUTH_BASE}${AUTH_PREFIX}/refresh`, {
-        method: "POST",
-        credentials: AUTH_USES_COOKIES ? "include" : "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: session.sessionId, refreshToken: session.refreshToken }),
-      });
-
-      if (refreshRes.res.ok && refreshRes.data?.accessToken) {
-        access = refreshRes.data.accessToken;
-        saveSession({ accessToken: access });
-        ({ res, data } = await doFetch(`${BASE}${prefix}${path}`, makeOpts(access)));
-      } else if (refreshRes.res.status === 401) {
-        clearSession();
-      }
-    } catch {
-      // refresh failed, proceed with original error
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      access = refreshed;
+      ({ res, data } = await doFetch(`${BASE}${prefix}${path}`, makeOpts(access)));
     }
   }
 
@@ -240,9 +255,11 @@ export function getBackendUrl() {
 // The correct path prefix to append to getBackendUrl() for direct/raw fetches
 // (e.g. streaming a ticket PDF) that bypass api()/callFunction(). Using a
 // hardcoded "/svp-proxy" here previously broke the Railway fallback the same
-// way api() did.
+// way api()/callFunction() did.
 export function getProxyPrefix(): string {
   const prefix = PROXY_PREFIX("proxy");
   if (!prefix) throw new Error("No proxy backend is configured.");
   return prefix;
 }
+
+export { SUPABASE_PROJECT_ID };
