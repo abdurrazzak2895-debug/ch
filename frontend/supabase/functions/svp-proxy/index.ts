@@ -1332,7 +1332,9 @@ Deno.serve(async (req) => {
       return json(data, 200, t2hubContext.sessionCookie);
     }
 
-    if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
+    // Keep the legacy direct route public as well as the booking-data alias.
+    // Both use the managed T2Hub session and do not require a candidate login.
+    if (req.method === "GET" && (path === "/t2hub/exam-available-dates" || path === "/exam-available-dates")) {
       return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req, t2hubContext), 200, t2hubContext.sessionCookie);
     }
 
@@ -1350,7 +1352,7 @@ Deno.serve(async (req) => {
       return json(data, 200, t2hubContext.sessionCookie);
     }
 
-    if (req.method === "GET" && path === "/t2hub/pacc-exam-sessions") {
+    if (req.method === "GET" && (path === "/t2hub/pacc-exam-sessions" || path === "/exam-sessions")) {
       const params = new URLSearchParams(query);
       params.delete("locale");
       const city = params.get("city") || "";
