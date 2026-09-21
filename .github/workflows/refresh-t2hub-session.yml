@@ -23,6 +23,10 @@ jobs:
       HAS_T2HUB_PASSWORD: ${{ secrets.T2HUB_PASSWORD != '' }}
       HAS_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
       HAS_SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID != '' }}
+      HAS_TAKAMOL_LIVE_API_URL: ${{ secrets.TAKAMOL_LIVE_API_URL != '' }}
+      HAS_TAKAMOL_ENCRYPTION_KEY_B64: ${{ secrets.TAKAMOL_ENCRYPTION_KEY_B64 != '' }}
+      HAS_TAKAMOL_SESSION_COOKIE: ${{ secrets.TAKAMOL_SESSION_COOKIE != '' }}
+      HAS_TAKAMOL_XSRF_TOKEN: ${{ secrets.TAKAMOL_XSRF_TOKEN != '' }}
 
     steps:
       - name: Checkout
@@ -34,8 +38,16 @@ jobs:
           echo "T2HUB_PASSWORD present: $HAS_T2HUB_PASSWORD"
           echo "SUPABASE_ACCESS_TOKEN present: $HAS_SUPABASE_ACCESS_TOKEN"
           echo "SUPABASE_PROJECT_ID present: $HAS_SUPABASE_PROJECT_ID"
+          echo "TAKAMOL_LIVE_API_URL present: $HAS_TAKAMOL_LIVE_API_URL"
+          echo "TAKAMOL_ENCRYPTION_KEY_B64 present: $HAS_TAKAMOL_ENCRYPTION_KEY_B64"
+          echo "TAKAMOL_SESSION_COOKIE present: $HAS_TAKAMOL_SESSION_COOKIE"
+          echo "TAKAMOL_XSRF_TOKEN present: $HAS_TAKAMOL_XSRF_TOKEN"
           if [ "$HAS_T2HUB_EMAIL" != "true" ] || [ "$HAS_T2HUB_PASSWORD" != "true" ] || [ "$HAS_SUPABASE_ACCESS_TOKEN" != "true" ] || [ "$HAS_SUPABASE_PROJECT_ID" != "true" ]; then
             echo "::error::Add T2HUB_EMAIL, T2HUB_PASSWORD, SUPABASE_ACCESS_TOKEN, and SUPABASE_PROJECT_ID under repository Actions secrets."
+            exit 1
+          fi
+          if [ "$HAS_TAKAMOL_LIVE_API_URL" != "true" ] || [ "$HAS_TAKAMOL_ENCRYPTION_KEY_B64" != "true" ] || [ "$HAS_TAKAMOL_SESSION_COOKIE" != "true" ] || [ "$HAS_TAKAMOL_XSRF_TOKEN" != "true" ]; then
+            echo "::error::Add TAKAMOL_LIVE_API_URL, TAKAMOL_ENCRYPTION_KEY_B64, TAKAMOL_SESSION_COOKIE, and TAKAMOL_XSRF_TOKEN under repository Actions secrets for the live Takamol proxy."
             exit 1
           fi
 
@@ -68,3 +80,21 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: node scripts/auto-setup-t2hub.mjs
+
+      - name: Publish Takamol live proxy secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          TAKAMOL_LIVE_API_URL: ${{ secrets.TAKAMOL_LIVE_API_URL }}
+          TAKAMOL_ENCRYPTION_KEY_B64: ${{ secrets.TAKAMOL_ENCRYPTION_KEY_B64 }}
+          TAKAMOL_SESSION_COOKIE: ${{ secrets.TAKAMOL_SESSION_COOKIE }}
+          TAKAMOL_XSRF_TOKEN: ${{ secrets.TAKAMOL_XSRF_TOKEN }}
+        run: |
+          mkdir -p .secrets
+          cat > .secrets/takamol.env <<EOF
+          TAKAMOL_LIVE_API_URL=${TAKAMOL_LIVE_API_URL}
+          TAKAMOL_ENCRYPTION_KEY_B64=${TAKAMOL_ENCRYPTION_KEY_B64}
+          TAKAMOL_SESSION_COOKIE=${TAKAMOL_SESSION_COOKIE}
+          TAKAMOL_XSRF_TOKEN=${TAKAMOL_XSRF_TOKEN}
+          EOF
+          npx --yes supabase secrets set --env-file .secrets/takamol.env --project-ref "$SUPABASE_PROJECT_ID"
