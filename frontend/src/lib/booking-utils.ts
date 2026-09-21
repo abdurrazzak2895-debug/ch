@@ -35,22 +35,24 @@ export function isNoExamSession422(error: any): boolean {
   return Number(error?.status) === 422 && /no\s+exam\s+session|test\s+center.*no.*session|exam\s+session.*(?:not|unavailable|found)/i.test(fragments);
 }
 
-// Returns true when the proxy returned the T2HUB_SESSION_MISSING code. The
-// booking page is the only place a user sees t2hub session errors today, so
+// Returns true when the proxy returned the SVP_SESSION_MISSING code. The
+// booking page is the only place a user sees SVP session errors today, so
 // it owns the user-facing message and shows a single visible banner instead
 // of silently leaving every picker empty.
 export function isT2HubSessionMissing(error: any): boolean {
   if (!error) return false;
-  if (error?.data?.code === "T2HUB_SESSION_MISSING") return true;
-  if (error?.data?.error?.code === "T2HUB_SESSION_MISSING") return true;
-  if (Number(error?.status) === 503 && /t2hub session has not been bootstrapped/i.test(String(error?.message || ""))) {
+  // Accept both the new SVP_* code and the legacy value so the UI keeps working
+  // whether or not the edge function has been redeployed yet.
+  const code = String(error?.data?.code || error?.data?.error?.code || "");
+  if (code === "SVP_SESSION_MISSING" || code === "T2HUB_SESSION_MISSING") return true;
+  if (Number(error?.status) === 503 && /(?:svp|t2hub) session has not been bootstrapped/i.test(String(error?.message || ""))) {
     return true;
   }
   return false;
 }
 
 export const T2HUB_SESSION_MISSING_MESSAGE =
-  "Booking data is temporarily unavailable: the t2hub session has not been bootstrapped on the server. Please contact your administrator.";
+  "Booking data is temporarily unavailable: the SVP session has not been bootstrapped on the server. Please contact your administrator.";
 
 export const VERIFIED_DHAKA_CENTER_ROSTER = [
   { siteId: "403", name: "Arkan Al-Taameer for professional classification - Dhaka", city: "Dhaka" },

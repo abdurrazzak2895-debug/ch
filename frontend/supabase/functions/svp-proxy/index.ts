@@ -27,7 +27,7 @@ const corsHeaders = {
 // called without the session cookie and key headers. The booking page detects
 // this and triggers a one-time t2hub login bridge to capture the
 // caller's own t2hub session material.
-export const T2HUB_SESSION_MISSING_CODE = "T2HUB_SESSION_MISSING";
+export const T2HUB_SESSION_MISSING_CODE = "SVP_SESSION_MISSING";
 
 type T2HubRequestContext = {
   sessionCookie: string;
@@ -92,7 +92,7 @@ async function decryptVaultSecret(value: string): Promise<string> {
   if (!masterSecret) throw new Error("SESSION_ENCRYPTION_KEY is not configured");
 
   const separator = value.indexOf(".");
-  if (separator <= 0) throw new Error("Invalid encrypted T2Hub secret format");
+  if (separator <= 0) throw new Error("Invalid encrypted SVP secret format");
 
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -579,7 +579,7 @@ async function getFreshT2HubSession() {
   throw {
     statusCode: 503,
     code: T2HUB_SESSION_MISSING_CODE,
-    message: "Unable to bootstrap a fresh T2Hub session.",
+    message: "Unable to bootstrap a fresh SVP session.",
     details: { status: lastStatus || undefined },
   };
 }
@@ -735,7 +735,7 @@ async function retryWithEnvSession<T>(
 ): Promise<T> {
   const fallback = getEnvSession();
   if (!fallback || fallback.cookie === current.cookie) {
-    throw new Error("No different T2Hub fallback session is available");
+    throw new Error("No different SVP fallback session is available");
   }
   t2hubSession = fallback;
   return operation(fallback);
@@ -816,15 +816,15 @@ async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSes
     session.cookie = extractT2HubCookie(res.headers, session.cookie);
     if (!res.ok) {
       const details = await decodeT2HubResponse(res, session.keyRaw).catch(() => null);
-      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
+      throw { statusCode: res.status, message: `SVP request failed: ${res.status}`, details };
     }
     return await decodeT2HubResponse(res, session.keyRaw);
   } catch (err: any) {
     if (timedOut || err?.name === "AbortError" || Number(err?.code) === 20) {
       throw {
         statusCode: 504,
-        code: "T2HUB_TIMEOUT",
-        message: `T2Hub did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
+        code: "SVP_TIMEOUT",
+        message: `SVP did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
       };
     }
     throw err;
@@ -868,15 +868,15 @@ async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNulla
     session.cookie = extractT2HubCookie(res.headers, session.cookie);
     if (!res.ok) {
       const details = await decodeT2HubResponse(res, session.keyRaw).catch(() => null);
-      throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
+      throw { statusCode: res.status, message: `SVP request failed: ${res.status}`, details };
     }
     return await decodeT2HubResponse(res, session.keyRaw);
   } catch (err: any) {
     if (timedOut || err?.name === "AbortError" || Number(err?.code) === 20) {
       throw {
         statusCode: 504,
-        code: "T2HUB_TIMEOUT",
-        message: `T2Hub did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
+        code: "SVP_TIMEOUT",
+        message: `SVP did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
       };
     }
     throw err;
@@ -938,8 +938,8 @@ async function t2hubFetch(path: string, req: Request, context: T2HubRequestConte
         });
         throw {
           statusCode: Number(err?.statusCode || freshErr?.statusCode || 502),
-          code: "T2HUB_SESSION_RETRY_FAILED",
-          message: "T2Hub request failed after refreshing the session.",
+          code: "SVP_SESSION_RETRY_FAILED",
+          message: "SVP request failed after refreshing the session.",
           details: { upstreamStatus: Number(err?.statusCode || 0) || null },
         };
       }

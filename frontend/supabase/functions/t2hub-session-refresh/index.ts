@@ -328,7 +328,7 @@ async function saveEncryptedSession(
     .maybeSingle();
 
   if (accountError) throw new Error(`Account lookup failed: ${accountError.message}`);
-  if (!account) throw new Error("Enabled T2Hub account was not found");
+  if (!account) throw new Error("Enabled SVP account was not found");
   if (!result.cookieHeader) throw new Error("Login returned no session cookie");
 
   const encryptedCookie = await encryptSecret(result.cookieHeader);
@@ -478,7 +478,7 @@ Deno.serve(async (req) => {
       const csrfCookie = Deno.env.get("T2HUB_SESSION_CSRF") ?? "";
       const password = Deno.env.get("T2HUB_TEST_PASSWORD") ?? "";
       if (!loginIdentifier || !cookieHeader || !sessionKey || !password) {
-        return json({ error: "Managed T2Hub session or test credentials are not configured" }, 400);
+        return json({ error: "Managed SVP session or test credentials are not configured" }, 400);
       }
       const saved = await saveEncryptedSession(loginIdentifier, {
         cookieHeader,

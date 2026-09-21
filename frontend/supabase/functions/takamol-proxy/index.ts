@@ -71,7 +71,7 @@ function normalize(path: string, payload: any): any {
     return { categories: occupations.map((item: any) => ({ id: item.id ?? item.category_id, name: item.name ?? item.title ?? item.english_name ?? String(item) })) };
   }
   if (path === "/exam-available-dates") {
-    return { dates: Array.isArray(payload?.available_dates) ? payload.available_dates : [], cities: [], sessions: [], source: "t2hub-live" };
+    return { dates: Array.isArray(payload?.available_dates) ? payload.available_dates : [], cities: [], sessions: [], source: "svp-live" };
   }
   if (path === "/test-centers") {
     const sites = Array.isArray(payload?.sites) ? payload.sites : Array.isArray(payload) ? payload : [];
