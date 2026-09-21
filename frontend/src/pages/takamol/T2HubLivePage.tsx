@@ -133,7 +133,9 @@ function OccupationsFullList({ data }: { data: any }) {
 export default function T2HubLivePage() {
   const [division, setDivision] = useState("Rajshahi");
   const [categoryId, setCategoryId] = useState<number | "">("");
-  const [examDate, setExamDate] = useState("2026-09-12");
+  // Do not seed a stale date. The live T2Hub calendar changes frequently and
+  // the first request must use one of the dates returned by the proxy.
+  const [examDate, setExamDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -248,6 +250,28 @@ export default function T2HubLivePage() {
     return [...set].sort();
   }, [result]);
 
+  useEffect(() => {
+    if (result?.type !== "available-dates" || availableDates.length === 0) return;
+    // Keep a manually selected date when it is still available; otherwise
+    // select the first live date so Find Sessions cannot query an expired
+    // hard-coded date.
+    if (!availableDates.includes(examDate)) {
+      const nextDate = availableDates[0];
+      setExamDate(nextDate);
+      setCalMonth(new Date(`${nextDate}T00:00:00`).getMonth());
+      setCalYear(new Date(`${nextDate}T00:00:00`).getFullYear());
+    }
+  }, [availableDates, examDate, result?.type]);
+
+  const sessionStatus = result?.type === "session-status" ? result.data : null;
+  const hasT2HubSession = Boolean(
+    sessionStatus?.vault?.hasKey && sessionStatus?.vault?.hasCookie
+  ) || Boolean(
+    sessionStatus?.cache?.hasKey && sessionStatus?.cache?.hasCookie
+  ) || Boolean(
+    sessionStatus?.env?.hasKey && sessionStatus?.env?.hasCookie
+  );
+
   return (
     <div className="tk-shell" style={{ padding: 0 }}>
       <header className="tk-topbar">
@@ -287,7 +311,7 @@ export default function T2HubLivePage() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
-            <button className="tk-btn tk-btn--gold" onClick={fetchPaccSessions} disabled={loading}><Zap size={14} /> Find Sessions</button>
+            <button className="tk-btn tk-btn--gold" onClick={fetchPaccSessions} disabled={loading || !categoryId || !examDate}><Zap size={14} /> Find Sessions</button>
             <button className="tk-btn" onClick={fetchTestCenters} disabled={loading}><MapPin size={14} /> All Centers</button>
             <button className="tk-btn" onClick={fetchOccupations} disabled={loading}><Search size={14} /> Occupations</button>
           </div>
@@ -411,9 +435,9 @@ export default function T2HubLivePage() {
             <div className="tk-step-heading" style={{ marginBottom: 12 }}><span>02</span><div><p className="tk-eyebrow">HEALTH</p><strong>Session Status</strong></div></div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               {[
-                { label: "Encryption Key", ok: result.data?.env?.hasKey, detail: result.data?.env?.hasKey ? `${result.data.env.keyLen} chars` : "missing" },
-                { label: "Session Cookie", ok: result.data?.env?.hasCookie, detail: result.data?.env?.hasCookie ? `${result.data.env.cookieLen} chars` : "missing" },
-                { label: "Overall Status", ok: result.data?.status === "ok", detail: result.data?.status },
+                { label: "Encryption Key", ok: hasT2HubSession, detail: hasT2HubSession ? "available" : "missing" },
+                { label: "Session Cookie", ok: hasT2HubSession, detail: hasT2HubSession ? "available" : "missing" },
+                { label: "Overall Status", ok: hasT2HubSession, detail: result.data?.status || "missing" },
               ].map((item) => (
                 <div key={item.label} style={{ padding: "14px 16px", border: `1px solid ${item.ok ? "var(--tk-success)" : "var(--tk-danger)"}33`, borderRadius: 10, background: `${item.ok ? "var(--tk-success)" : "var(--tk-danger)"}08` }}>
                   <p style={{ fontSize: 11, color: "var(--tk-muted)", marginBottom: 4 }}>{item.label}</p>
