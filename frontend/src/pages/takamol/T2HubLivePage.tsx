@@ -144,7 +144,7 @@ export default function T2HubLivePage() {
   const [loadingOccupations, setLoadingOccupations] = useState(true);
 
   useEffect(() => {
-    api("/booking-data/occupations?per_page=1000").then((data) => {
+    api("/booking-data/bootstrap", { method: "POST", body: {} }).then((data) => {
       const occs = data?.occupations || (Array.isArray(data) ? data : []);
       setAllOccupations(occs);
       if (occs.length > 0 && categoryId === "") setCategoryId(occs[0].id || "");
@@ -154,7 +154,7 @@ export default function T2HubLivePage() {
   useEffect(() => {
     if (!categoryId) return;
     setLoading(true); setError(null);
-    api(`/booking-data/exam-available-dates?category_id=${categoryId}&city=${encodeURIComponent(division)}`)
+    api(`/booking-data/bootstrap`, { method: "POST", body: { category_id: categoryId, city: division } })
       .then((data) => { setResult({ type: "available-dates", data }); setRawJson(JSON.stringify(data, null, 2)); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -179,7 +179,7 @@ export default function T2HubLivePage() {
   const fetchTestCenters = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/test-centers?city=${encodeURIComponent(division)}`);
+      const data = await api(`/booking-data/bootstrap`, { method: "POST", body: { resource: "centers", city: division } });
       setResult({ type: "test-centers", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }
@@ -189,7 +189,7 @@ export default function T2HubLivePage() {
   const fetchPaccSessions = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${examDate}&auto_fix_search=1`);
+      const data = await api(`/booking-data/bootstrap`, { method: "POST", body: { category_id: categoryId, city: division, exam_date: examDate } });
       setResult({ type: "pacc-sessions", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }
@@ -199,7 +199,7 @@ export default function T2HubLivePage() {
   const fetchPaccSessionsForDate = useCallback(async (date: string) => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${date}&auto_fix_search=1`);
+      const data = await api(`/booking-data/bootstrap`, { method: "POST", body: { category_id: categoryId, city: division, exam_date: date } });
       setResult({ type: "pacc-sessions", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }
@@ -209,7 +209,7 @@ export default function T2HubLivePage() {
   const fetchAvailableDates = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/exam-available-dates?category_id=${categoryId}&city=${encodeURIComponent(division)}`);
+      const data = await api(`/booking-data/bootstrap`, { method: "POST", body: { category_id: categoryId, city: division } });
       setResult({ type: "available-dates", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }
@@ -219,7 +219,7 @@ export default function T2HubLivePage() {
   const fetchOccupations = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/occupations?per_page=1000`);
+      const data = await api(`/booking-data/bootstrap`, { method: "POST", body: {} });
       setResult({ type: "occupations", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }

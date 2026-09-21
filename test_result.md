@@ -915,6 +915,36 @@ frontend:
 agent_communication:
   - agent: "main"
     message: |
+      ENHANCEMENT (needs retest AFTER deploy) — single opaque aggregator + repeated-call fix + auto-refresh secret simplification.
+
+      1) Repeated /exam-sessions/:id calls (BookingPage.tsx): FIXED + already verified by testing
+         agent this session — the pacc-exam-sessions payload already carries each center name
+         (test_center.name / center_name), so the per-session detail loop is redundant. The effect
+         now seeds names from the payload and only falls back to detail fetch when a name is missing.
+
+      2) NEW opaque endpoint POST /booking-data/bootstrap (svp-proxy -> /t2hub/bootstrap). One call
+         serves the whole flow; the server branches on the JSON body:
+           - {}                              -> occupations (T2Hub PACC catalog, SVP fallback)
+           - {category_id, city}             -> { available_dates }
+           - {category_id, city, exam_date}  -> { sessions, sites, ... }
+           - {resource:"centers", city}      -> { sites } (all city centers)
+         T2HubLivePage.tsx now uses ONLY /booking-data/bootstrap for all data (occupations, dates,
+         sessions, centers); params travel in the POST body so they are not in the URL. The Network
+         tab therefore shows only "bootstrap" calls. NOTE: this route is NOT on the live deployment
+         yet — it 404s until the user deploys via "Save to Github". Cannot be tested live until then.
+         It reuses the SAME t2hubFetch/t2hubQuery calls the individual routes use (already verified),
+         so the aggregated shapes match.
+
+      3) .github/workflows/refresh-t2hub-session.yml: the TAKAMOL_* live-proxy secrets are now
+         OPTIONAL (the job no longer hard-fails without them; that publish step is skipped). The
+         hourly auto-refresh now needs only T2HUB_EMAIL, T2HUB_PASSWORD, SUPABASE_ACCESS_TOKEN,
+         SUPABASE_PROJECT_ID. Secrets themselves must be set by the user in GitHub repo settings.
+
+      POST-DEPLOY RETEST: hit POST {BASE}/booking-data/bootstrap with the 4 body variants and confirm
+      each returns the right dataset; confirm T2HubLivePage shows only bootstrap calls in Network.
+
+  - agent: "main"
+    message: |
       NEW TASK for testing — T2Hub live proxy (svp-proxy edge function).
 
       Please test against the LIVE Supabase svp-proxy base:

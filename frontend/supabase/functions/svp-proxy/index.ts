@@ -1361,6 +1361,79 @@ Deno.serve(async (req) => {
       return json(await svpFetch(buildPath("/api/v1/visitor_space/occupations", query)));
     }
 
+    // ═══ Single opaque aggregator ══════════════════════════════════════════
+    // The browser makes ONE call (POST /booking-data/bootstrap) for every step
+    // of the flow. The server decides internally which upstream data to fetch
+    // from the request body, so the individual occupation / available-date /
+    // session / center steps never appear as separate requests in the Network
+    // tab. POST keeps the parameters out of the URL as well.
+    if ((req.method === "POST" || req.method === "GET") && path === "/t2hub/bootstrap") {
+      const b: Record<string, string> = {};
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        for (const k of ["category_id", "city", "exam_date", "resource"]) {
+          if (body?.[k] != null && String(body[k]).length) b[k] = String(body[k]);
+        }
+      } else {
+        const qp = new URLSearchParams(query);
+        for (const k of ["category_id", "city", "exam_date", "resource"]) {
+          const v = qp.get(k);
+          if (v) b[k] = v;
+        }
+      }
+      const bCategory = b.category_id || "";
+      const bCity = b.city || "";
+      const bExamDate = b.exam_date || "";
+      const bResource = b.resource || "";
+
+      // 1) Sessions + the centers that actually have sessions (category+city+date)
+      if (bCategory && bCity && bExamDate) {
+        const sp = new URLSearchParams({ category_id: bCategory, city: bCity, exam_date: bExamDate, auto_fix_search: "1" });
+        const [centersData, sessionsData] = await Promise.all([
+          t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: bCity })), req, t2hubContext).catch(() => ({ sites: [] })),
+          t2hubFetch(t2hubQuery("/pacc-exam-sessions", sp), req, t2hubContext),
+        ]);
+        const centers: any[] = Array.isArray((centersData as any)?.sites) ? (centersData as any).sites : [];
+        const centerByName = new Map(centers.map((c: any) => [String(c?.name || "").trim().toLowerCase(), c]));
+        const sessions = (Array.isArray((sessionsData as any)?.sessions) ? (sessionsData as any).sessions : [])
+          .map((item: any) => normalizeT2HubSession(item, centerByName));
+        const activeCenterIds = new Set(
+          sessions.map((s: any) => String(
+            s?.site_id || s?.test_center?.site_id || s?.test_center?.id || s?.test_center_id || s?.test_center?.test_center_id || ""
+          ).trim()).filter(Boolean)
+        );
+        const sites = centers.filter((c: any) => {
+          const id = String(c.id || c.test_center_id || "").trim();
+          return id && activeCenterIds.has(id);
+        });
+        return json({ ...(sessionsData as any), sessions, exam_sessions: sessions, sites }, 200, t2hubContext.sessionCookie);
+      }
+
+      // 2) All centers in a city (explicit request from the "All Centers" view)
+      if (bResource === "centers" && bCity) {
+        const data = await t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: bCity })), req, t2hubContext);
+        return json(data, 200, t2hubContext.sessionCookie);
+      }
+
+      // 3) Available dates (category + city)
+      if (bCategory && bCity) {
+        const data = await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams({ category_id: bCategory, city: bCity })), req, t2hubContext);
+        return json(data, 200, t2hubContext.sessionCookie);
+      }
+
+      // 4) Default: occupation catalog (T2Hub PACC catalog with SVP fallback)
+      try {
+        const occParams = new URLSearchParams({ per_page: "10000", exclude_ignored: "1" });
+        const data = await t2hubFetch(t2hubQuery("/pacc/occupations", occParams), req, t2hubContext);
+        const list = Array.isArray((data as any)?.occupations) ? (data as any).occupations : (Array.isArray(data) ? data : []);
+        if (list.length) return json(data, 200, t2hubContext.sessionCookie);
+      } catch (_err) {
+        // Fall through to the SVP visitor-space fallback.
+      }
+      return json(await svpFetch(buildPath("/api/v1/visitor_space/occupations", "per_page=1000")));
+    }
+
+
     // ═══ t2hub data routes (no SVP auth required — uses t2hub session only) ═══
     if (req.method === "GET" && path === "/t2hub/test-centers") {
       const params = new URLSearchParams(query);

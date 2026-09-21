@@ -47,8 +47,7 @@ jobs:
             exit 1
           fi
           if [ "$HAS_TAKAMOL_LIVE_API_URL" != "true" ] || [ "$HAS_TAKAMOL_ENCRYPTION_KEY_B64" != "true" ] || [ "$HAS_TAKAMOL_SESSION_COOKIE" != "true" ] || [ "$HAS_TAKAMOL_XSRF_TOKEN" != "true" ]; then
-            echo "::error::Add TAKAMOL_LIVE_API_URL, TAKAMOL_ENCRYPTION_KEY_B64, TAKAMOL_SESSION_COOKIE, and TAKAMOL_XSRF_TOKEN under repository Actions secrets for the live Takamol proxy."
-            exit 1
+            echo "::warning::Optional live-proxy secrets (TAKAMOL_LIVE_API_URL, TAKAMOL_ENCRYPTION_KEY_B64, TAKAMOL_SESSION_COOKIE, TAKAMOL_XSRF_TOKEN) are not all set. The core auto-login session refresh will still run; the takamol-proxy publish step is skipped."
           fi
 
       - name: Setup Node.js
@@ -82,6 +81,7 @@ jobs:
         run: node scripts/auto-setup-t2hub.mjs
 
       - name: Publish Takamol live proxy secrets
+        if: env.HAS_TAKAMOL_LIVE_API_URL == 'true' && env.HAS_TAKAMOL_ENCRYPTION_KEY_B64 == 'true' && env.HAS_TAKAMOL_SESSION_COOKIE == 'true' && env.HAS_TAKAMOL_XSRF_TOKEN == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
