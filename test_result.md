@@ -372,7 +372,7 @@ frontend:
           comment: |
             ✅ NATIONALITY AUTO-FILL FIX VERIFIED - FULLY WORKING!
             
-            Test Environment: https://e0833519-d0ac-4c29-ad0c-c0390ce5a44e.preview.emergentagent.com
+            Test Environment: https://occupations-api.preview.emergentagent.com
             Test Passport: /app/tests/assets/passport_biodata.jpg (Bangladesh passport biodata page)
             Credentials: abdurrazzaktest@gmail.com / 12345678
             
@@ -427,7 +427,7 @@ frontend:
           comment: |
             ✅ LIVE END-TO-END VERIFICATION SUCCESSFUL - FIX IS WORKING!
             
-            Test Environment: https://e0833519-d0ac-4c29-ad0c-c0390ce5a44e.preview.emergentagent.com
+            Test Environment: https://occupations-api.preview.emergentagent.com
             Test Passport: /app/tests/assets/passport_biodata.jpg (Bangladesh passport biodata page)
             Credentials: abdurrazzaktest@gmail.com / 12345678
             
@@ -486,7 +486,7 @@ frontend:
           comment: |
             ❌ LIVE RE-CHECK BLOCKED BY HTTP 409 - PASSPORT ALREADY REGISTERED
             
-            Test Environment: https://repo-inspector-105.preview.emergentagent.com (branch: perf/booking-fast-load)
+            Test Environment: https://occupations-api.preview.emergentagent.com (branch: perf/booking-fast-load)
             Test Passport: /tmp/pp_bio.jpg (Bangladesh passport biodata page)
             Credentials: abdurrazzaktest@gmail.com / 12345678
             Test Date: 2026-09-19
@@ -953,7 +953,7 @@ agent_communication:
       ❌ LIVE RE-CHECK BLOCKED - HTTP 409 PASSPORT ALREADY REGISTERED
       
       Test Date: 2026-09-19 19:41 UTC
-      Test Environment: https://repo-inspector-105.preview.emergentagent.com (branch: perf/booking-fast-load)
+      Test Environment: https://occupations-api.preview.emergentagent.com (branch: perf/booking-fast-load)
       Test Passport: /tmp/pp_bio.jpg (same Bangladesh passport used in previous tests)
       
       EXECUTIVE SUMMARY:
