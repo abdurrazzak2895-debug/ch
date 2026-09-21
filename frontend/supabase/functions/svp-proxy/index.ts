@@ -1269,6 +1269,14 @@ Deno.serve(async (req) => {
       });
     }
 
+    // The occupation catalog is also exposed by SVP's public visitor-space
+    // API. Prefer it here: the browser-facing booking-data contract maps to
+    // this route, while T2Hub's encrypted catalog requires a browser session
+    // key that the server-side refresh cannot reliably reproduce.
+    if (req.method === "GET" && path === "/t2hub/occupations") {
+      return json(await svpFetch(buildPath("/api/v1/visitor_space/occupations", query)));
+    }
+
     // ═══ t2hub data routes (no SVP auth required — uses t2hub session only) ═══
     if (req.method === "GET" && path === "/t2hub/test-centers") {
       const params = new URLSearchParams(query);
@@ -1278,19 +1286,6 @@ Deno.serve(async (req) => {
       params.delete("city");
       params.set("division", city);
       const data = await t2hubFetch(t2hubQuery("/test-centers", params), req);
-      return json(data);
-    }
-
-    if (req.method === "GET" && path === "/t2hub/occupations") {
-      const params = new URLSearchParams(query);
-      // The upstream currently returns 250 records (count === total), but use
-      // a high internal page size so future catalog growth is loaded in full.
-      params.set("per_page", "10000");
-      if (t2hubOccupationCache && t2hubOccupationCache.expiresAt > Date.now()) {
-        return json(t2hubOccupationCache.data);
-      }
-      const data = await t2hubFetch(t2hubQuery("/pacc/occupations", params), req);
-      t2hubOccupationCache = { expiresAt: Date.now() + 5 * 60 * 1000, data };
       return json(data);
     }
 
