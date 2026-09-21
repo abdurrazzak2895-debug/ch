@@ -151,6 +151,15 @@ export function normalizeOccupation(item: any): NormalizedOccupation {
   };
 }
 
+export function buildAvailableDatesQueryParams(categoryId: string | number | null | undefined, occupationId?: string | number | null | undefined): URLSearchParams {
+  const params = new URLSearchParams();
+  const categoryValue = String(categoryId ?? "").trim();
+  const occupationValue = String(occupationId ?? "").trim();
+  if (categoryValue) params.set("category_id", categoryValue);
+  if (occupationValue && occupationValue !== categoryValue) params.set("occupation_id", occupationValue);
+  return params;
+}
+
 export function getSessionId(item: any): string {
   return String(
     item?.encrypted_session_id ||

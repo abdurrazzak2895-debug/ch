@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildAvailableDatesQueryParams,
   buildCenterOptions,
   filterCentersWithAvailableSessions,
   getSessionCenterName,
@@ -89,6 +90,16 @@ describe("booking-utils center name resolution", () => {
     expect(names).toContain("Pabna Technical Training Centre");
     expect(names).toContain("Dhaka Skills Center");
     expect(names.some((n) => n.includes("Chittagong"))).toBe(true);
+  });
+
+  it("omits occupation_id when it matches category_id so the live T2Hub query is valid", () => {
+    const params = buildAvailableDatesQueryParams(2279, 2279);
+    expect(params.get("category_id")).toBe("2279");
+    expect(params.get("occupation_id")).toBeNull();
+
+    const mixed = buildAvailableDatesQueryParams(2279, 2061);
+    expect(mixed.get("category_id")).toBe("2279");
+    expect(mixed.get("occupation_id")).toBe("2061");
   });
 
   it("buildCenterOptions renders correct name+city for every center regardless of shape", () => {

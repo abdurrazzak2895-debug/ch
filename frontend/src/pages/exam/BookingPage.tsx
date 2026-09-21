@@ -17,6 +17,7 @@ import {
   isNoExamSession422,
   isT2HubSessionMissing,
   T2HUB_SESSION_MISSING_MESSAGE,
+  buildAvailableDatesQueryParams,
 } from "@/lib/booking-utils";
 import "@/styles/booking-premium.css";
 import { useAccessAuth } from "@/contexts/AccessAuthContext";
@@ -622,12 +623,10 @@ export default function BookingPage() {
       setLoadingDates(true); setError("");
       try {
         const mappedToT2Hub = t2HubCategoryId !== categoryId;
-        const data = await api(mappedToT2Hub
-          ? `/booking-data/exam-available-dates?category_id=${encodeURIComponent(t2HubCategoryId)}`
-          : `/available-dates?${new URLSearchParams({
-              category_id: String(categoryId),
-              occupation_id: String(selectedOccupationId),
-            }).toString()}`, { signal: controller.signal });
+        const availableDatesUrl = mappedToT2Hub
+          ? `/booking-data/exam-available-dates?${buildAvailableDatesQueryParams(t2HubCategoryId, selectedOccupationId).toString()}`
+          : `/available-dates?${buildAvailableDatesQueryParams(categoryId, selectedOccupationId).toString()}`;
+        const data = await api(availableDatesUrl, { signal: controller.signal });
         if (!active) return;
         let rawDates = data?.available_dates || data?.dates || data?.data || (Array.isArray(data) ? data : []);
         // The SVP calendar can be empty even while T2Hub has the real
