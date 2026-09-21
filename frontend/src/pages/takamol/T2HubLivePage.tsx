@@ -79,7 +79,7 @@ function OccupationsFullList({ data }: { data: any }) {
   const grouped = useMemo(() => {
     const map = new Map<string, any[]>();
     occupations.forEach((o: any) => {
-      const cat = o.category_name || "Uncategorized";
+      const cat = o.category_name || "All Occupations";
       if (!map.has(cat)) map.set(cat, []);
       map.get(cat)!.push(o);
     });
@@ -90,7 +90,7 @@ function OccupationsFullList({ data }: { data: any }) {
     <section className="tk-card tk-booking-card" style={{ border: "1px solid var(--tk-glass-border)" }}>
       <div className="tk-step-heading" style={{ marginBottom: 12 }}>
         <span>02</span>
-        <div><p className="tk-eyebrow">RESULT</p><strong>{occupations.length} / {totalCount} Occupations by Category</strong></div>
+        <div><p className="tk-eyebrow">RESULT</p><strong>{occupations.length} / {totalCount} Occupations</strong></div>
       </div>
 
       <div className="tk-field" style={{ marginBottom: 16 }}>
@@ -162,14 +162,19 @@ export default function T2HubLivePage() {
 
   const categories = useMemo(() => {
     const map = new Map<number, { id: number; name: string; count: number }>();
-    allOccupations.forEach((o) => {
+    allOccupations.forEach((o: any) => {
       const catId = o.id ?? o.category_id;
-      const catName = o.category_name || `Category ${catId}`;
+      const catName = o.english_name || o.name || o.category_name || `Occupation ${catId}`;
       if (!catId) return;
       if (map.has(catId)) { map.get(catId)!.count++; } else { map.set(catId, { id: catId, name: catName, count: 1 }); }
     });
     return [...map.values()].sort((a, b) => b.count - a.count);
   }, [allOccupations]);
+
+  const selectedOccupationName = useMemo(() => {
+    const selected = allOccupations.find((o: any) => String(o.id ?? o.category_id) === String(categoryId));
+    return selected?.english_name || selected?.name || selected?.category_name || "";
+  }, [allOccupations, categoryId]);
 
   const fetchTestCenters = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
@@ -276,9 +281,9 @@ export default function T2HubLivePage() {
             <div className="tk-field"><label><MapPin size={13} /> Division</label>
               <select value={division} onChange={e => setDivision(e.target.value)}>{DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}</select>
             </div>
-            <div className="tk-field"><label><Building2 size={13} /> Category</label>
+            <div className="tk-field"><label><Users size={13} /> Occupation</label>
               <select value={categoryId} onChange={e => setCategoryId(Number(e.target.value))} disabled={loadingOccupations}>
-                {loadingOccupations ? <option value="">Loading categories...</option> :
+                {loadingOccupations ? <option value="">Loading occupations...</option> :
                  categories.map(c => <option key={c.id} value={c.id}>{c.name} ({c.count})</option>)}
               </select>
             </div>
@@ -342,7 +347,7 @@ export default function T2HubLivePage() {
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: `${seatColor(seats)}22`, color: seatColor(seats), border: `1px solid ${seatColor(seats)}44`, borderRadius: 6, padding: "3px 10px", fontWeight: 800, fontSize: 13, width: "fit-content" }}>
                             {seats > 0 ? <CircleCheck size={13} /> : <CircleX size={13} />} {seats} seats
                           </div>
-                          <div><span style={{ color: "var(--tk-muted)" }}>Category:</span> <span style={{ fontSize: 11 }}>{s.category?.english_name || "—"}</span></div>
+                          <div><span style={{ color: "var(--tk-muted)" }}>Occupation:</span> <span style={{ fontSize: 11 }}>{selectedOccupationName || s.category?.english_name || s.category?.name || "—"}</span></div>
                           <div style={{ fontFamily: "monospace", fontSize: 10, color: "var(--tk-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.session_id || s.id}>{String(s.session_id || s.id).substring(0, 30)}...</div>
                         </div>
                       );
