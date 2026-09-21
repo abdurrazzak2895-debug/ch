@@ -115,7 +115,10 @@ const SVP_LOCALE = "en";
 const SVP_ORIGIN = "https://svp-international.pacc.sa";
 const SVP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
-const T2HUB_BASE = "https://t2hub.app";
+// The refresh function authenticates against this Takamol host and captures
+// its host/session encryption context. Calling the alternate gateway host
+// with that key can produce an encrypted response that cannot be decrypted.
+const T2HUB_BASE = (Deno.env.get("T2HUB_BASE_URL") || "https://takamol.t2hub.app").replace(/\/$/, "");
 const T2HUB_APP_PATH = "/takamol";
 const ACCESS_JWT_SECRET = Deno.env.get("JWT_ACCESS_SECRET");
 if (!ACCESS_JWT_SECRET) throw new Error("JWT_ACCESS_SECRET is required");
