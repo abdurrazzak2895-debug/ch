@@ -124,6 +124,11 @@ const SVP_UA =
 // with that key can produce an encrypted response that cannot be decrypted.
 const T2HUB_BASE = (Deno.env.get("T2HUB_BASE_URL") || "https://takamol.t2hub.app").replace(/\/$/, "");
 const T2HUB_APP_PATH = "/takamol";
+// T2Hub's PACC session search is slow and frequently needs >8s to respond
+// (especially with auto_fix_search enabled). The previous 8s abort caused
+// intermittent "The signal has been aborted" (AbortError) failures. Give the
+// upstream more room; override with T2HUB_FETCH_TIMEOUT_MS if needed.
+const T2HUB_FETCH_TIMEOUT_MS = Number(Deno.env.get("T2HUB_FETCH_TIMEOUT_MS")) || 25000;
 const ACCESS_JWT_SECRET = Deno.env.get("JWT_ACCESS_SECRET");
 if (!ACCESS_JWT_SECRET) throw new Error("JWT_ACCESS_SECRET is required");
 
@@ -796,7 +801,8 @@ async function decodeT2HubResponse(res: Response, keyRaw: string) {
 
 async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSession>) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, T2HUB_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(`${T2HUB_BASE}${path}`, {
       signal: controller.signal,
@@ -813,6 +819,15 @@ async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSes
       throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
     }
     return await decodeT2HubResponse(res, session.keyRaw);
+  } catch (err: any) {
+    if (timedOut || err?.name === "AbortError" || Number(err?.code) === 20) {
+      throw {
+        statusCode: 504,
+        code: "T2HUB_TIMEOUT",
+        message: `T2Hub did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
+      };
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -829,7 +844,8 @@ function shouldRefreshT2HubSession(error: any): boolean {
 
 async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNullable<typeof t2hubSession>) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, T2HUB_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(`${T2HUB_BASE}${path}`, {
       method: "POST",
@@ -855,6 +871,15 @@ async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNulla
       throw { statusCode: res.status, message: `t2hub request failed: ${res.status}`, details };
     }
     return await decodeT2HubResponse(res, session.keyRaw);
+  } catch (err: any) {
+    if (timedOut || err?.name === "AbortError" || Number(err?.code) === 20) {
+      throw {
+        statusCode: 504,
+        code: "T2HUB_TIMEOUT",
+        message: `T2Hub did not respond within ${Math.round(T2HUB_FETCH_TIMEOUT_MS / 1000)}s. Please try again.`,
+      };
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }

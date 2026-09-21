@@ -310,10 +310,18 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "T2Hub live proxy — restore PACC occupation catalog id-space + fix 8s abort timeout (svp-proxy edge function)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+  notes: |
+    The svp-proxy fix is an undeployed Supabase Edge Function change. Until the user does
+    "Save to Github" (which triggers supabase-deploy.yml), the LIVE URL still runs the OLD code.
+    So this run should CHARACTERIZE current live behavior and confirm the root cause:
+    (1) pacc-exam-sessions can return "The signal has been aborted" intermittently (8s timeout);
+    (2) with the correct T2Hub category_id (e.g. 50 = Barber, city=Dhaka), available-dates and
+        pacc-exam-sessions return real data, while an SVP occupation id (e.g. 2492) returns empty.
 
 frontend:
   - task: "Passport upload auto-fill — fix corrupted nationality_code/empty country_code so scan fills country + nationality (live svp-registration)"
@@ -575,6 +583,42 @@ frontend:
             clearing the test data or using a fresh passport.
 
 backend:
+  - task: "T2Hub live proxy — restore PACC occupation catalog id-space + fix 8s abort timeout (svp-proxy edge function)"
+    implemented: true
+    working: "NA"
+    file: "frontend/supabase/functions/svp-proxy/index.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User reported (live https://www.choice-pc-sv.xyz/takamol/live): city/available-date/
+            session/test-center not showing, and "The signal has been aborted" errors.
+
+            Root cause 1 (empty dates/sessions): commit 57176d4 switched /t2hub/occupations
+            (= /booking-data/occupations) from the T2Hub PACC catalog to SVP visitor_space
+            occupations. SVP ids (e.g. 2492) are a DIFFERENT id-space than T2Hub category_id
+            (e.g. 50 = "Barber"). exam-available-dates / pacc-exam-sessions only accept T2Hub
+            category ids, so every lookup returned empty. Verified live via curl: category_id=50
+            returns real dates (2026-09-27/30) and real sessions (Bangladesh German TTC, 8 seats),
+            while occupation id 2492 returns empty. FIX: /t2hub/occupations now fetches the T2Hub
+            PACC catalog (/pacc/occupations) which carries BOTH the T2Hub id/category_id AND the
+            SVP occupation_id (needed by BookingPage mapping), with a graceful SVP fallback if the
+            catalog can't be fetched/decrypted.
+
+            Root cause 2 ("The signal has been aborted", code 20 AbortError): fetchT2HubJson /
+            fetchT2HubJsonPost aborted the upstream fetch after only 8s. T2Hub PACC session search
+            (with auto_fix_search=1) frequently needs >8s, so it intermittently aborted. FIX:
+            timeout raised to 25s (T2HUB_FETCH_TIMEOUT_MS, env-overridable) and AbortError is now
+            surfaced as a clear 504 "T2Hub did not respond within 25s" instead of the cryptic
+            "The signal has been aborted".
+
+            NOTE: This is a Supabase Edge Function. It is NOT active in preview/local — it only
+            takes effect AFTER the user deploys via "Save to Github" (supabase-deploy.yml).
+            Testing must run against the LIVE svp-proxy URL.
+
   - task: "AI passport auto-fill — POST /api/passport-scan (Gemini via Emergent LLM key)"
     implemented: true
     working: true
@@ -869,6 +913,40 @@ frontend:
             correctly with proper error handling.
 
 agent_communication:
+  - agent: "main"
+    message: |
+      NEW TASK for testing — T2Hub live proxy (svp-proxy edge function).
+
+      Please test against the LIVE Supabase svp-proxy base:
+        BASE=https://xklwzkraobxetxdcysun.supabase.co/functions/v1/svp-proxy
+        Headers: apikey + Authorization Bearer = sb_publishable_DmaCr-JGwROOx7VV8srFhQ_wtQfokBf
+      (These are public/anon; the routes need no user auth.)
+
+      IMPORTANT CONTEXT: The fix I just made is in a Supabase EDGE FUNCTION that is NOT yet
+      deployed (deploy happens only when the user clicks "Save to Github"). So the live URL
+      currently runs the OLD code. Your job this run is to CONFIRM THE ROOT CAUSE / characterize
+      current behavior, not to prove the fix is already live.
+
+      Verify:
+      1) GET /booking-data/exam-available-dates?category_id=50&city=Dhaka  → should return
+         real dates (e.g. 2026-09-27, 2026-09-30). This proves the T2Hub session works and
+         the correct category-id space returns data.
+      2) GET /booking-data/exam-available-dates?category_id=2492&city=Dhaka → returns
+         {"available_dates":[]} (empty) — proves the SVP occupation-id space is the wrong one
+         (this is the bug the occupation-catalog fix addresses).
+      3) GET /booking-data/pacc-exam-sessions?category_id=50&city=Dhaka&exam_date=2026-09-27&auto_fix_search=1
+         → should EVENTUALLY return non-empty "sessions" (real center + seats). It may
+         intermittently return {"message":"The signal has been aborted","code":20} due to the
+         current 8s upstream abort — retry up to ~4 times and report how often it aborts vs
+         succeeds. That intermittent abort IS the second bug (timeout too short; fix raises it
+         to 25s, effective only after deploy).
+      4) GET /booking-data/occupations?per_page=1000 → returns 200 with a non-empty
+         "occupations" array (currently SVP catalog; after deploy it will be the T2Hub PACC
+         catalog with occupation_id + T2Hub id).
+
+      Report: which calls returned data, whether the abort reproduced and how frequently, and
+      any HTTP status/error bodies. Do NOT attempt to log into the app; these are public GET
+      routes.
   - agent: "testing"
     message: |
       Passport upload auto-fill fix verification BLOCKED by database constraint.
