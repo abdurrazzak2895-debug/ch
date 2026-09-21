@@ -39,6 +39,7 @@ jobs:
           fi
 
       - name: Link project
+        if: ${{ env.HAS_DB_PASSWORD == 'true' }}
         working-directory: frontend
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
