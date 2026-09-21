@@ -756,6 +756,7 @@ export default function BookingPage() {
           category_id: String(t2HubCategoryId || categoryId),
           city: String(selectedCity),
           exam_date: availableDate,
+          auto_fix_search: "1",
         }).toString()}`, { signal: controller.signal });
         if (!active) return;
         const allSessions = Array.isArray(data?.sessions) ? data.sessions : pickArray(data);

@@ -184,7 +184,7 @@ export default function T2HubLivePage() {
   const fetchPaccSessions = useCallback(async () => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${examDate}`);
+      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${examDate}&auto_fix_search=1`);
       setResult({ type: "pacc-sessions", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }
@@ -194,7 +194,7 @@ export default function T2HubLivePage() {
   const fetchPaccSessionsForDate = useCallback(async (date: string) => {
     setLoading(true); setError(null); setResult(null); setRawJson(null);
     try {
-      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${date}`);
+      const data = await api(`/booking-data/pacc-exam-sessions?category_id=${categoryId}&city=${encodeURIComponent(division)}&exam_date=${date}&auto_fix_search=1`);
       setResult({ type: "pacc-sessions", data });
       setRawJson(JSON.stringify(data, null, 2));
     } catch (e: any) { setError(e.message); }

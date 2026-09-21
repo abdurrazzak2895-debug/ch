@@ -1355,6 +1355,10 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && (path === "/t2hub/pacc-exam-sessions" || path === "/exam-sessions")) {
       const params = new URLSearchParams(query);
       params.delete("locale");
+      // T2Hub's normal PACC session search can hang/504 when its search mode
+      // is not auto-corrected. The live endpoint returns sessions reliably
+      // when this flag is enabled; preserve an explicit caller value.
+      params.set("auto_fix_search", params.get("auto_fix_search") || "1");
       const city = params.get("city") || "";
       const categoryId = params.get("category_id") || "";
       const examDate = params.get("exam_date") || "";
