@@ -553,6 +553,34 @@ async function fetchT2HubSessionPage(appPath: string) {
   return { res, html, keyRaw: extractT2HubKey(html) };
 }
 
+/** Force a fresh session for the currently configured T2Hub host. */
+async function getFreshT2HubSession() {
+  const appPaths = [T2HUB_APP_PATH, `${T2HUB_APP_PATH}/`, `${T2HUB_APP_PATH}/agent/login`];
+  let lastStatus = 0;
+  for (const appPath of appPaths) {
+    const { res, html, keyRaw } = await fetchT2HubSessionPage(appPath);
+    lastStatus = res.status;
+    if (!res.ok || !keyRaw) continue;
+
+    const fresh = {
+      keyRaw,
+      csrfToken: extractT2HubCsrf(html),
+      cookie: extractT2HubCookie(res.headers),
+      appPath,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    };
+    t2hubSession = fresh;
+    return fresh;
+  }
+
+  throw {
+    statusCode: 503,
+    code: T2HUB_SESSION_MISSING_CODE,
+    message: "Unable to bootstrap a fresh T2Hub session.",
+    details: { status: lastStatus || undefined },
+  };
+}
+
 /** Build a fallback T2Hub session from the legacy environment secrets. */
 function getEnvSession(): NonNullable<typeof t2hubSession> | null {
   const keyRaw = Deno.env.get("T2HUB_SESSION_KEY") || "";
@@ -792,6 +820,15 @@ async function fetchT2HubJson(path: string, session: NonNullable<typeof t2hubSes
   }
 }
 
+function shouldRefreshT2HubSession(error: any): boolean {
+  const message = String(error?.message || "").toLowerCase();
+  return [401, 403, 419].includes(Number(error?.statusCode)) ||
+    message.includes("operationerror") ||
+    message.includes("decrypt") ||
+    message.includes("authentication tag") ||
+    message.includes("invalid key");
+}
+
 async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNullable<typeof t2hubSession>) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -861,12 +898,28 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
     } catch {
       // Continue with the existing decrypt/session refresh retry below.
     }
-    if (err?.message?.includes("OperationError") || err?.message?.includes("decrypt")) {
-      t2hubSession = null;
-      const fresh = await getT2HubSession();
-      const data = await fetchT2HubJson(path, fresh);
-      lastT2HubCookie = fresh.cookie;
-      return data;
+    if (shouldRefreshT2HubSession(err)) {
+      try {
+        const fresh = await getFreshT2HubSession();
+        const data = await fetchT2HubJson(path, fresh);
+        lastT2HubCookie = fresh.cookie;
+        return data;
+      } catch (freshErr: any) {
+        console.error("T2Hub request failed after fresh-session retry", {
+          host: new URL(T2HUB_BASE).host,
+          path,
+          initialStatus: Number(err?.statusCode || 0) || null,
+          initialMessage: String(err?.message || "unknown"),
+          retryStatus: Number(freshErr?.statusCode || 0) || null,
+          retryMessage: String(freshErr?.message || "unknown"),
+        });
+        throw {
+          statusCode: Number(err?.statusCode || freshErr?.statusCode || 502),
+          code: "T2HUB_SESSION_RETRY_FAILED",
+          message: "T2Hub request failed after refreshing the session.",
+          details: { upstreamStatus: Number(err?.statusCode || 0) || null },
+        };
+      }
     }
     throw err;
   }
@@ -2008,9 +2061,19 @@ Deno.serve(async (req) => {
 
     return json({ error: "Not found" }, 404);
   } catch (err: any) {
-    const status = Number(err?.statusCode || 500);
+    const rawMessage = String(err?.message || "");
+    const status = Number(err?.statusCode || (err?.name === "AbortError" ? 504 : 500));
     const code = err?.code || (status === 401 ? "AUTH_REQUIRED" : "SVP_PROXY_ERROR");
-    const message = err?.message || "Server error";
+    const message = rawMessage || (status === 504 ? "Upstream request timed out" : "Server error");
+    console.error("svp-proxy request failed", {
+      requestId: req.headers.get("x-request-id") || null,
+      method: req.method,
+      path,
+      status,
+      code,
+      message,
+      t2hubHost: new URL(T2HUB_BASE).host,
+    });
     // Surface both the nested and flat shape so legacy client code that
     // reads data.message keeps working alongside new code that reads
     // data.code (e.g. the booking page's t2hub-missing bridge trigger).
