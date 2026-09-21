@@ -83,6 +83,22 @@ function normalize(path: string, payload: any): any {
   return payload;
 }
 
+/** Resolve frontend and raw API paths relative to the live API base. */
+function resolveRoute(incomingPath: string): { path: string; kind?: string } {
+  const routes: Record<string, { path: string; kind?: string }> = {
+    "/api/takamol/categories": { path: "/pacc/occupations", kind: "categories" },
+    "/api/pacc/occupations": { path: "/pacc/occupations", kind: "categories" },
+    "/api/takamol/dates": { path: "/exam-available-dates", kind: "dates" },
+    "/api/exam-available-dates": { path: "/exam-available-dates", kind: "dates" },
+    "/api/takamol/centers": { path: "/test-centers", kind: "centers" },
+    "/api/test-centers": { path: "/test-centers", kind: "centers" },
+    "/api/takamol/sessions": { path: "/pacc-exam-sessions", kind: "sessions" },
+    "/api/pacc-exam-sessions": { path: "/pacc-exam-sessions", kind: "sessions" },
+    "/api/fix-search-mode": { path: "/fix-search-mode", kind: "fix-search-mode" },
+  };
+  return routes[incomingPath] || { path: incomingPath };
+}
+
 async function fetchLive(path: string, query: URLSearchParams, req: Request): Promise<{ status: number; payload: any }> {
   const upstreamUrl = `${LIVE_API_BASE}${path}${query.toString() ? `?${query.toString()}` : ""}`;
   const headers = new Headers({ Accept: "application/json" });
@@ -120,19 +136,16 @@ Deno.serve(async (req) => {
       try { body = await req.json(); } catch { body = {}; }
     }
 
-    let path = incomingPath;
+    const resolved = resolveRoute(incomingPath);
+    let path = resolved.path;
     const query = new URLSearchParams(url.search);
-    if (incomingPath === "/api/takamol/categories") {
-      path = "/pacc/occupations";
+    if (resolved.kind === "categories") {
       query.set("exclude_ignored", "1");
-    } else if (incomingPath === "/api/takamol/dates") {
-      path = "/exam-available-dates";
+    } else if (resolved.kind === "dates") {
       for (const [key, value] of queryFromBody(body)) query.set(key, value);
-    } else if (incomingPath === "/api/takamol/centers") {
-      path = "/test-centers";
+    } else if (resolved.kind === "centers") {
       for (const [key, value] of queryFromBody(body)) query.set(key, value);
-    } else if (incomingPath === "/api/takamol/sessions") {
-      path = "/pacc-exam-sessions";
+    } else if (resolved.kind === "sessions") {
       for (const [key, value] of queryFromBody(body)) query.set(key, value);
       // The live system prepares search mode before the session lookup.
       if (query.get("category_id") && query.get("city") && query.get("exam_date")) {
