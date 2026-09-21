@@ -1312,11 +1312,27 @@ Deno.serve(async (req) => {
       });
     }
 
-    // The occupation catalog is also exposed by SVP's public visitor-space
-    // API. Prefer it here: the browser-facing booking-data contract maps to
-    // this route, while T2Hub's encrypted catalog requires a browser session
-    // key that the server-side refresh cannot reliably reproduce.
+    // Occupation catalog for the booking/T2Hub flows. Served from the T2Hub
+    // PACC catalog (see the handler below) with an SVP visitor-space fallback.
     if (req.method === "GET" && path === "/t2hub/occupations") {
+      // Restore the T2Hub PACC catalog as the source of truth for occupations.
+      // Its records carry BOTH the T2Hub `id`/`category_id` (the value the
+      // availability/session endpoints actually accept, e.g. 50 = "Barber")
+      // AND the SVP `occupation_id`, which the booking flow needs to map an SVP
+      // occupation to its T2Hub category. SVP's visitor-space catalog only has
+      // the SVP id space (e.g. 2492), so every date/session lookup came back
+      // empty. Fall back to the SVP catalog only if the T2Hub catalog can't be
+      // fetched/decrypted, so this can never be worse than the previous state.
+      try {
+        const params = new URLSearchParams(query);
+        params.set("per_page", params.get("per_page") || "10000");
+        params.set("exclude_ignored", params.get("exclude_ignored") || "1");
+        const data = await t2hubFetch(t2hubQuery("/pacc/occupations", params), req, t2hubContext);
+        const list = Array.isArray(data?.occupations) ? data.occupations : (Array.isArray(data) ? data : []);
+        if (list.length) return json(data, 200, t2hubContext.sessionCookie);
+      } catch (_err) {
+        // Fall through to the SVP visitor-space fallback below.
+      }
       return json(await svpFetch(buildPath("/api/v1/visitor_space/occupations", query)));
     }
 

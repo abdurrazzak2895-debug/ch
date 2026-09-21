@@ -384,10 +384,16 @@ export default function T2HubLivePage() {
                     }}>{d}</div>
                   ))}
                 </div>
-                {availableDates.length > 0 && (
+                {availableDates.length > 0 ? (
                   <div style={{ marginTop: 16 }}>
                     <p style={{ fontSize: 12, color: "var(--tk-muted)", marginBottom: 8 }}>Selected: <strong style={{ color: "var(--tk-gold)" }}>{examDate || "none"}</strong></p>
                     <p style={{ fontSize: 11, color: "var(--tk-teal)" }}>Click any available date to load sessions</p>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 16, padding: "12px 14px", border: "1px dashed var(--tk-glass-border)", borderRadius: 10, background: "rgba(255,255,255,0.02)" }}>
+                    <p style={{ fontSize: 12, color: "var(--tk-muted)", lineHeight: 1.5 }}>
+                      No open exam dates for <strong>{selectedOccupationName || "this occupation"}</strong> in <strong>{division}</strong> right now. Try another occupation or division — many occupations have no scheduled sessions at any given time.
+                    </p>
                   </div>
                 )}
               </div>
