@@ -11,7 +11,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (accessToken: string, user?: any) => void;
+  login: (accessToken: string, user?: any, session?: { refreshToken?: string; sessionId?: string }) => void;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
 }
@@ -80,8 +80,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const loginFn = useCallback((accessToken: string, userData?: any) => {
+  const loginFn = useCallback((accessToken: string, userData?: any, session?: { refreshToken?: string; sessionId?: string }) => {
     localStorage.setItem("accessToken", accessToken);
+    if (session?.refreshToken) localStorage.setItem("refreshToken", session.refreshToken);
+    if (session?.sessionId) localStorage.setItem("sessionId", session.sessionId);
+
     const payload = decodeJwtPayload(accessToken);
     setUser({
       login: userData?.login || payload?.login || "User",

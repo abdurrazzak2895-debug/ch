@@ -47,4 +47,5 @@ describe("API session token storage", () => {
       refreshToken: "refresh-token",
     });
   });
+
 });

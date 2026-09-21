@@ -20,9 +20,13 @@ import { execSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const ENV_FILE = path.join(ROOT, '.env.t2hub');
+const ENV_FILE_CANDIDATES = [
+  path.join(ROOT, '.env.t2hub'),
+  path.join(ROOT, 'frontend', '.env.t2hub'),
+];
 const SESSION_FILE = path.join(ROOT, 'captured', 't2hub-session', 'session.json');
 const SECRETS_FILE = path.join(ROOT, '.secrets', 't2hub-session.env');
+const TAKAMOL_SECRETS_FILE = path.join(ROOT, '.secrets', 'takamol.env');
 const PROJECT_REF = process.env.SUPABASE_PROJECT_ID || 'xklwzkraobxetxdcysun';
 const interactive = process.argv.includes('--interactive') || process.argv.includes('-i');
 
@@ -35,16 +39,19 @@ function loadEnv() {
     T2HUB_LOGIN_URL: process.env.T2HUB_LOGIN_URL || '',
     T2HUB_URL: process.env.T2HUB_URL || '',
   };
-  if (fs.existsSync(ENV_FILE)) {
-    for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
+
+  for (const candidate of ENV_FILE_CANDIDATES) {
+    if (!fs.existsSync(candidate)) continue;
+    for (const line of fs.readFileSync(candidate, 'utf8').split('\n')) {
       const t = line.trim();
       if (!t || t.startsWith('#')) continue;
-      const eq = t.indexOf('=');
-      if (eq > 0) {
-        const key = t.substring(0, eq).trim();
-        const value = t.substring(eq + 1).trim().replace(/^['"]|['"]$/g, '');
-        if (!env[key]) env[key] = value;
-      }
+      const sepIndex = t.indexOf('=');
+      const colonIndex = t.indexOf(':');
+      const splitIndex = sepIndex >= 0 ? (colonIndex >= 0 ? Math.min(sepIndex, colonIndex) : sepIndex) : colonIndex;
+      if (splitIndex <= 0) continue;
+      const key = t.substring(0, splitIndex).trim();
+      const value = t.substring(splitIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+      if (!env[key]) env[key] = value;
     }
   }
   return env;
@@ -165,7 +172,7 @@ function saveSession(sessionData) {
 
 // ── Step 3: Write secrets file ─────────────────────────────────────────────
 function writeSecretsFile(session) {
-  console.log('\n[3/4] Writing secrets file...');
+  console.log('\n[3/4] Writing T2Hub secrets file...');
   ensureDir(SECRETS_FILE);
 
   const cookieHeader = session.cookies.map(c => `${c.name}=${c.value}`).join('; ');
@@ -180,6 +187,32 @@ function writeSecretsFile(session) {
 
   const lines = Object.entries(envVars).map(([k, v]) => `${k}=${v}`);
   fs.writeFileSync(SECRETS_FILE, lines.join('\n') + '\n');
+
+  for (const [k, v] of Object.entries(envVars)) {
+    const display = v.length > 50 ? v.substring(0, 25) + '...' + v.substring(v.length - 15) : v;
+    console.log(`  → ${k} (${v.length} chars): ${display}`);
+  }
+
+  return envVars;
+}
+
+function writeTakamolSecretsFile(session) {
+  console.log('\n[3/4] Writing Takamol secrets file...');
+  ensureDir(TAKAMOL_SECRETS_FILE);
+
+  const cookieHeader = session.cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  const xsrfCookie = session.cookies.find(c => c.name === 'XSRF-TOKEN');
+  const xsrf = xsrfCookie?.value || process.env.TAKAMOL_XSRF_TOKEN || '';
+
+  const envVars = {
+    TAKAMOL_LIVE_API_URL: process.env.TAKAMOL_LIVE_API_URL || 'https://t2hub.app/takamol/api',
+    TAKAMOL_ENCRYPTION_KEY_B64: session.encryptionKey || process.env.TAKAMOL_ENCRYPTION_KEY_B64 || '',
+    TAKAMOL_SESSION_COOKIE: cookieHeader || process.env.TAKAMOL_SESSION_COOKIE || '',
+    TAKAMOL_XSRF_TOKEN: xsrf,
+  };
+
+  const lines = Object.entries(envVars).map(([k, v]) => `${k}=${v}`);
+  fs.writeFileSync(TAKAMOL_SECRETS_FILE, lines.join('\n') + '\n');
 
   for (const [k, v] of Object.entries(envVars)) {
     const display = v.length > 50 ? v.substring(0, 25) + '...' + v.substring(v.length - 15) : v;
@@ -236,12 +269,14 @@ async function main() {
 
   // Step 3: Write secrets
   const envVars = writeSecretsFile(session);
+  const takamolEnvVars = writeTakamolSecretsFile(session);
 
   // Step 4: Push to Supabase
   pushToSupabase(envVars);
+  pushToSupabase(takamolEnvVars);
 
   console.log('\n=== DONE ===');
-  console.log('T2Hub session is now live on Supabase.');
+  console.log('T2Hub and Takamol session secrets are now live on Supabase.');
 }
 
 main().catch(e => {

@@ -221,6 +221,17 @@ async function callFunction<T = any>(
     }
   }
 
+  if (shouldRefresh(res.status, data) && !canRefresh && path.startsWith("/available-dates")) {
+    const storedRefreshToken = localStorage.getItem("refreshToken");
+    const storedSessionId = localStorage.getItem("sessionId");
+    if (storedRefreshToken && storedSessionId) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        ({ res, data } = await doFetch(`${BASE}${prefix}${path}`, makeOpts(refreshed)));
+      }
+    }
+  }
+
   if (!res.ok) {
     const message = data?.message || data?.error || "Request failed";
     throw Object.assign(new Error(message), { status: res.status, data });

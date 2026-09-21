@@ -69,7 +69,7 @@ export default function OtpPage() {
         otp_attempt: otpAttempt,
         otp_method: otpMethod,
       });
-      authLogin(res.accessToken, res.user || res);
+      authLogin(res.accessToken, res.user || res, { refreshToken: res.refreshToken, sessionId: res.sessionId });
       clearPendingAuth();
       setMsg("Verified. Taking you to your dashboard\u2026");
       setMsgType("ok");

@@ -170,7 +170,7 @@ export default function LoginPage() {
     setTokenMsgType("info");
     try {
       const res = await apiAuth("/token-login", { login: tokenLogin, token: svpToken });
-      authLogin(res.accessToken, res.user || res);
+      authLogin(res.accessToken, res.user || res, { refreshToken: res.refreshToken, sessionId: res.sessionId });
       setTokenMsg("Login successful. Redirecting...");
       setTokenMsgType("ok");
       navigate("/dashboard");
