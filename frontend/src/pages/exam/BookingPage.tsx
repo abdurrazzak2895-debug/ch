@@ -869,10 +869,29 @@ export default function BookingPage() {
       const newMap = new Map(testCenterMap);
       let changed = false;
 
-      // 1. Fetch /exam-sessions/:id and map the real test_center.name per exam_session_id.
-      const needDetail = sessions.filter((s: any) => {
+      // 0. Seed from the center name the sessions API already returns. The
+      //    booking-data/pacc-exam-sessions endpoint resolves and attaches the
+      //    real test_center.name server-side, so in the common case we can map
+      //    every center WITHOUT any per-session detail request. This removes
+      //    the N extra /exam-sessions/:id network calls that previously fired
+      //    once per session (the "repeated calls" seen in the Network tab).
+      sessions.forEach((s: any) => {
+        const explicitName = getExplicitSessionCenterName(s);
+        if (!explicitName) return;
+        const sessionKey = `session:${getSessionId(s)}`;
         const key = String(getCenterKey(s));
-        if (!key || newMap.has(key)) return false;
+        if (!newMap.has(sessionKey)) { newMap.set(sessionKey, explicitName); changed = true; }
+        if (key && !newMap.has(key)) { newMap.set(key, explicitName); changed = true; }
+      });
+
+      // 1. Only fetch /exam-sessions/:id for sessions the API did NOT already
+      //    name (rare fallback) and that are still unresolved.
+      const needDetail = sessions.filter((s: any) => {
+        if (getExplicitSessionCenterName(s)) return false;
+        const sessionKey = `session:${getSessionId(s)}`;
+        if (newMap.has(sessionKey)) return false;
+        const key = String(getCenterKey(s));
+        if (key && newMap.has(key)) return false;
         return true;
       });
       const uniqueIds = Array.from(new Set(needDetail.map((s: any) => String(getSessionId(s))).filter(Boolean)));

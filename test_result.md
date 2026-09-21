@@ -311,17 +311,17 @@ metadata:
 
 test_plan:
   current_focus:
-    - "T2Hub live proxy — restore PACC occupation catalog id-space + fix 8s abort timeout (svp-proxy edge function)"
+    - "BookingPage repeated /exam-sessions/:id calls — seed center names from sessions payload (reduce network calls)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
   notes: |
-    The svp-proxy fix is an undeployed Supabase Edge Function change. Until the user does
-    "Save to Github" (which triggers supabase-deploy.yml), the LIVE URL still runs the OLD code.
-    So this run should CHARACTERIZE current live behavior and confirm the root cause:
-    (1) pacc-exam-sessions can return "The signal has been aborted" intermittently (8s timeout);
-    (2) with the correct T2Hub category_id (e.g. 50 = Barber, city=Dhaka), available-dates and
-        pacc-exam-sessions return real data, while an SVP occupation id (e.g. 2492) returns empty.
+    Verify against the LIVE public svp-proxy endpoint (no login needed):
+    GET {BASE}/booking-data/pacc-exam-sessions?category_id=50&city=Dhaka&exam_date=2026-09-27&auto_fix_search=1
+    Confirm every element of "sessions" ALREADY carries a center name (test_center.name and/or
+    center_name and/or test_center_name). If it does, the frontend's per-session /exam-sessions/:id
+    detail loop (one call per session) is redundant — which is exactly what the fix removes by
+    seeding names from the payload. Report the session count (= number of extra calls previously made).
 
 frontend:
   - task: "Passport upload auto-fill — fix corrupted nationality_code/empty country_code so scan fills country + nationality (live svp-registration)"
