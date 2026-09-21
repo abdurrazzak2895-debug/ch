@@ -29,12 +29,16 @@ const corsHeaders = {
 // caller's own t2hub session material.
 export const T2HUB_SESSION_MISSING_CODE = "T2HUB_SESSION_MISSING";
 
-function json(data: unknown, status = 200) {
+type T2HubRequestContext = {
+  sessionCookie: string;
+};
+
+function json(data: unknown, status = 200, sessionCookie = "") {
   const headers: Record<string, string> = {
     ...corsHeaders,
     "Content-Type": "application/json",
   };
-  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
+  if (sessionCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = sessionCookie;
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -419,12 +423,6 @@ let t2hubSession:
 // Function isolate so every booking page does not repeat the same upstream
 // request. The short TTL keeps changes visible without making the catalog stale.
 let t2hubOccupationCache: { expiresAt: number; data: any } | null = null;
-
-// After every t2hub call we stash the most recent cookies here so the
-// response builder can echo them back to the caller in
-// the session-cookie response header. The caller is responsible for keeping its own copy in
-// sync ΓÇö these cookies rotate on every t2hub response.
-let lastT2HubCookie = "";
 
 // The t2hub landing page, every JSON API call, and the encrypted envelope
 // (x-encrypted: 1) all rotate the session and CSRF cookies. We must keep the
@@ -862,7 +860,7 @@ async function fetchT2HubJsonPost(path: string, body: unknown, session: NonNulla
   }
 }
 
-async function t2hubFetch(path: string, req: Request): Promise<any> {
+async function t2hubFetch(path: string, req: Request, context: T2HubRequestContext): Promise<any> {
   const provided = t2HubHeadersFromRequest(req);
   if (provided) {
     const session: NonNullable<typeof t2hubSession> = {
@@ -873,7 +871,7 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
       expiresAt: Date.now() + 10 * 60 * 1000,
     };
     const data = await fetchT2HubJson(path, session);
-    lastT2HubCookie = session.cookie;
+    context.sessionCookie = session.cookie;
     return data;
   }
   // Fallback: server-side cached session. Only works if a previous caller
@@ -881,19 +879,19 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
   const session = await getT2HubSession();
   try {
     const data = await fetchT2HubJson(path, session);
-    lastT2HubCookie = session.cookie;
+    context.sessionCookie = session.cookie;
     return data;
   } catch (err: any) {
     try {
       const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJson(path, alternate));
-      lastT2HubCookie = t2hubSession?.cookie || "";
+      context.sessionCookie = t2hubSession?.cookie || "";
       return data;
     } catch {
       // Continue with the legacy env fallback below.
     }
     try {
       const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJson(path, fallback));
-      lastT2HubCookie = t2hubSession?.cookie || "";
+      context.sessionCookie = t2hubSession?.cookie || "";
       return data;
     } catch {
       // Continue with the existing decrypt/session refresh retry below.
@@ -902,7 +900,7 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
       try {
         const fresh = await getFreshT2HubSession();
         const data = await fetchT2HubJson(path, fresh);
-        lastT2HubCookie = fresh.cookie;
+        context.sessionCookie = fresh.cookie;
         return data;
       } catch (freshErr: any) {
         console.error("T2Hub request failed after fresh-session retry", {
@@ -925,7 +923,7 @@ async function t2hubFetch(path: string, req: Request): Promise<any> {
   }
 }
 
-async function t2hubPost(path: string, body: unknown, req: Request): Promise<any> {
+async function t2hubPost(path: string, body: unknown, req: Request, context: T2HubRequestContext): Promise<any> {
   const provided = t2HubHeadersFromRequest(req);
   if (provided) {
     const session: NonNullable<typeof t2hubSession> = {
@@ -936,25 +934,25 @@ async function t2hubPost(path: string, body: unknown, req: Request): Promise<any
       expiresAt: Date.now() + 10 * 60 * 1000,
     };
     const data = await fetchT2HubJsonPost(path, body, session);
-    lastT2HubCookie = session.cookie;
+    context.sessionCookie = session.cookie;
     return data;
   }
   const session = await getT2HubSession();
   try {
     const data = await fetchT2HubJsonPost(path, body, session);
-    lastT2HubCookie = session.cookie;
+    context.sessionCookie = session.cookie;
     return data;
   } catch (err: any) {
     try {
       const data = await retryWithAlternateVaultSession(session, (alternate) => fetchT2HubJsonPost(path, body, alternate));
-      lastT2HubCookie = t2hubSession?.cookie || "";
+      context.sessionCookie = t2hubSession?.cookie || "";
       return data;
     } catch {
       // Continue with the legacy env fallback below.
     }
     try {
       const data = await retryWithEnvSession(session, (fallback) => fetchT2HubJsonPost(path, body, fallback));
-      lastT2HubCookie = t2hubSession?.cookie || "";
+      context.sessionCookie = t2hubSession?.cookie || "";
       return data;
     } catch {
       // Continue with the existing decrypt/session refresh retry below.
@@ -963,20 +961,11 @@ async function t2hubPost(path: string, body: unknown, req: Request): Promise<any
       t2hubSession = null;
       const fresh = await getT2HubSession();
       const data = await fetchT2HubJsonPost(path, body, fresh);
-      lastT2HubCookie = fresh.cookie;
+      context.sessionCookie = fresh.cookie;
       return data;
     }
     throw err;
   }
-}
-
-function jsonWithT2HubCookie(data: unknown, status = 200) {
-  const headers: Record<string, string> = {
-    ...corsHeaders,
-    "Content-Type": "application/json",
-  };
-  if (lastT2HubCookie) headers[SESSION_RESPONSE_COOKIE_HEADER] = lastT2HubCookie;
-  return new Response(JSON.stringify(data), { status, headers });
 }
 
 function t2hubQuery(path: string, params: URLSearchParams) {
@@ -1306,6 +1295,7 @@ Deno.serve(async (req) => {
   // The internal handlers still use the existing upstream integration paths.
   const path = rawPath.replace(/^\/booking-data(?=\/|$)/, "/t2hub");
   const query = url.search.replace(/^\?/, "");
+  const t2hubContext: T2HubRequestContext = { sessionCookie: "" };
 
   try {
     // ═══ t2hub session health check (no auth required) ═══
@@ -1338,16 +1328,16 @@ Deno.serve(async (req) => {
       if (!city) throw { statusCode: 400, message: "Missing city or division" };
       params.delete("city");
       params.set("division", city);
-      const data = await t2hubFetch(t2hubQuery("/test-centers", params), req);
-      return json(data);
+      const data = await t2hubFetch(t2hubQuery("/test-centers", params), req, t2hubContext);
+      return json(data, 200, t2hubContext.sessionCookie);
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-available-dates") {
-      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req));
+      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", new URLSearchParams(query)), req, t2hubContext), 200, t2hubContext.sessionCookie);
     }
 
     if (req.method === "GET" && path === "/t2hub/exam-sessions-bulk") {
-      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query)), req));
+      return json(await t2hubFetch(t2hubQuery("/exam-sessions-bulk", new URLSearchParams(query)), req, t2hubContext), 200, t2hubContext.sessionCookie);
     }
 
     if (req.method === "POST" && path === "/t2hub/exam-sessions-bulk") {
@@ -1356,8 +1346,8 @@ Deno.serve(async (req) => {
       if (!Array.isArray(requests) || !requests.length) {
         throw { statusCode: 400, message: "Missing requests array" };
       }
-      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests }, req);
-      return json(data);
+      const data = await t2hubPost(`${T2HUB_APP_PATH}/api/exam-sessions-bulk`, { requests }, req, t2hubContext);
+      return json(data, 200, t2hubContext.sessionCookie);
     }
 
     if (req.method === "GET" && path === "/t2hub/pacc-exam-sessions") {
@@ -1371,8 +1361,8 @@ Deno.serve(async (req) => {
       }
 
       const [centersData, sessionsData] = await Promise.all([
-        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
-        t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req),
+        t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req, t2hubContext),
+        t2hubFetch(t2hubQuery("/pacc-exam-sessions", params), req, t2hubContext),
       ]);
       const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
       const centerByName = new Map(
@@ -1483,7 +1473,7 @@ Deno.serve(async (req) => {
 
       // The official SVP date routes are not consistently available. Use the
       // corresponding t2hub calendar endpoint when all of them return 404.
-      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", params), req));
+      return json(await t2hubFetch(t2hubQuery("/exam-available-dates", params), req, t2hubContext), 200, t2hubContext.sessionCookie);
     }
 
     // Keep the existing `/occupations` client contract. SVP's public
@@ -1500,7 +1490,7 @@ Deno.serve(async (req) => {
       try {
         const params = new URLSearchParams(query);
         params.delete("locale");
-        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req));
+        return json(await t2hubFetch(t2hubQuery("/pacc/occupations", params), req, t2hubContext), 200, t2hubContext.sessionCookie);
       } catch {
         // final fallback: try individual_labor_space (authenticated)
         return json(await svpFetch(
@@ -1659,8 +1649,8 @@ Deno.serve(async (req) => {
         try {
           sessionParams.delete("locale");
           const [centersData, sessionsData] = await Promise.all([
-            t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req),
-            t2hubFetch(t2hubQuery("/exam-sessions-bulk", sessionParams), req),
+            t2hubFetch(t2hubQuery("/test-centers", new URLSearchParams({ division: city })), req, t2hubContext),
+            t2hubFetch(t2hubQuery("/exam-sessions-bulk", sessionParams), req, t2hubContext),
           ]);
           const centers: any[] = Array.isArray(centersData?.sites) ? centersData.sites : [];
           const centerByName = new Map(
